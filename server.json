@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.openagentland/lkg",
+  "description": "MCP server for enterprise local codebase indexing, semantic search, and code dependency graphs.",
+  "repository": {
+    "url": "https://github.com/openagentland/LLM-Knowledge-Graph",
+    "source": "github"
+  },
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@openagentland/lkg",
+      "version": "0.0.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

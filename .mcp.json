@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lkg": {
+      "command": "npx",
+      "args": ["-y", "@openagentland/lkg"]
+    }
+  }
+}

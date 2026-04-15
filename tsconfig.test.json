@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "composite": false,
+    "types": ["node", "vitest/globals"],
+    "tsBuildInfoFile": "./node_modules/.cache/tsbuildinfo/test.tsbuildinfo"
+  },
+  "include": ["src/**/*.test.ts"],
+  "exclude": ["node_modules", "dist", "tests/**"]
+}

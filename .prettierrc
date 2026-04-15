@@ -1,0 +1,11 @@
+{
+  "plugins": ["prettier-plugin-sh", "prettier-plugin-package"],
+  "overrides": [
+    {
+      "files": "src/assets/{cytoscape-dagre,cytoscape.min,dagre.min}.js",
+      "options": {
+        "requirePragma": true
+      }
+    }
+  ]
+}

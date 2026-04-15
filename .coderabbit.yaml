@@ -1,0 +1,25 @@
+reviews:
+  profile: chill
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+  path_filters:
+    - "src/**"
+    - "tests/**"
+    - "docs/**"
+    - ".github/**"
+    - "README.md"
+    - "package.json"
+    - "server.json"
+    - "glama.json"
+    - ".claude-plugin/**"
+    - ".codex-plugin/**"
+    - ".cursor-plugin/**"
+    - "gemini-extension.json"
+    - "!package-lock.json"
+    - "!dist/**"
+    - "!coverage/**"
+    - "!node_modules/**"
+    - "!.pnpm-store/**"
+    - "!.cache/**"
+    - "!.claude/**"

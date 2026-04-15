@@ -1,0 +1,130 @@
+{
+  "name": "@openagentland/lkg",
+  "version": "0.0.0",
+  "description": "The Agnostic Intelligence Layer for Repositories. Build LLM-powered Knowledge Graphs to unify Codebase & Documentation. Local-first, Enterprise-grade, and Infrastructure-agnostic (Ollama, Qdrant, LanceDB). Move beyond RAG to true Repository Intelligence.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openagentland/LLM-Knowledge-Graph.git"
+  },
+  "author": {
+    "name": "John Martin",
+    "email": "john.itvn@gmail.com"
+  },
+  "homepage": "https://github.com/openagentland/LLM-Knowledge-Graph#readme",
+  "bugs": {
+    "url": "https://github.com/openagentland/LLM-Knowledge-Graph/issues"
+  },
+  "main": "dist/main.js",
+  "bin": {
+    "lkg": "dist/main.js"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.app.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint . --max-warnings=0 --cache --cache-location .cache/eslintcache",
+    "lint:fix": "eslint . --fix --max-warnings=0 --cache --cache-location .cache/eslintcache",
+    "prepare": "husky",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "test:e2e": "vitest run --project e2e",
+    "test:integration": "vitest run --project integration",
+    "test:unit": "vitest run --project unit",
+    "test:unit:coverage": "vitest run --project unit --coverage",
+    "test:unit:watch": "vitest --project unit --watch"
+  },
+  "keywords": [
+    "mcp",
+    "llm-knowledge-graph",
+    "knowledge-graph",
+    "graph-rag",
+    "rag",
+    "llm",
+    "local-llm",
+    "repository-intelligence",
+    "codebase",
+    "indexer",
+    "code-analysis",
+    "code-graph",
+    "documentation-understanding",
+    "vector-database",
+    "qdrant",
+    "lancedb",
+    "chromadb",
+    "ollama",
+    "node-llama-cpp",
+    "embeddings",
+    "semantic-search",
+    "context-window-optimization",
+    "ai-infrastructure",
+    "agent-memory",
+    "agnostic",
+    "enterprise-grade"
+  ],
+  "dependencies": {
+    "@ast-grep/lang-bash": "^0.0.7",
+    "@ast-grep/lang-c": "^0.0.5",
+    "@ast-grep/lang-cpp": "^0.0.5",
+    "@ast-grep/lang-csharp": "^0.0.5",
+    "@ast-grep/lang-go": "^0.0.5",
+    "@ast-grep/lang-java": "^0.0.6",
+    "@ast-grep/lang-kotlin": "^0.0.6",
+    "@ast-grep/lang-php": "^0.0.6",
+    "@ast-grep/lang-python": "^0.0.5",
+    "@ast-grep/lang-ruby": "^0.0.6",
+    "@ast-grep/lang-rust": "^0.0.6",
+    "@ast-grep/lang-scala": "^0.0.6",
+    "@ast-grep/lang-swift": "^0.0.7",
+    "@ast-grep/napi": "^0.40.5",
+    "@google/generative-ai": "^0.24.1",
+    "@lancedb/lancedb": "^0.27.2",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@parcel/watcher": "^2.5.6",
+    "@qdrant/js-client-rest": "^1.17.0",
+    "glob": "^11.0.1",
+    "ignore": "^7.0.3",
+    "node-llama-cpp": "^3.14.4",
+    "ollama": "^0.5.14",
+    "open": "^10.2.0",
+    "openai": "^6.22.0",
+    "proper-lockfile": "^4.1.2",
+    "voyageai": "^0.2.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.5.3",
+    "@commitlint/config-conventional": "^20.5.3",
+    "@eslint/js": "^9.39.4",
+    "@types/node": "^22.19.17",
+    "@types/proper-lockfile": "^4.1.4",
+    "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^9.39.4",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-plugin-check-file": "^3.3.0",
+    "eslint-plugin-import": "^2.32.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.8.3",
+    "prettier-plugin-package": "^2.0.0",
+    "prettier-plugin-sh": "^0.18.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.59.1",
+    "vitest": "^4.0.18"
+  },
+  "lint-staged": {
+    "**/*.{ts,tsx,js,jsx,mjs,cjs}": [
+      "eslint --fix --max-warnings=0 --cache --cache-location .cache/eslintcache",
+      "prettier --write"
+    ],
+    "**/*.{md,sh,bash,json}": [
+      "prettier --write"
+    ]
+  },
+  "mcpName": "io.github.openagentland/lkg"
+}

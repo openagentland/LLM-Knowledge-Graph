@@ -1,0 +1,23 @@
+{
+  "name": "llm-knowledge-graph",
+  "version": "0.0.0",
+  "description": "Codebase intelligence — semantic search workflows, dependency graph analysis, and context artifact exploration for LLM-Knowledge-Graph",
+  "author": {
+    "name": "John Martin",
+    "email": "john.itvn@gmail.com"
+  },
+  "homepage": "https://github.com/openagentland/LLM-Knowledge-Graph",
+  "repository": "https://github.com/openagentland/LLM-Knowledge-Graph",
+  "license": "MIT",
+  "keywords": [
+    "llm-knowledge-graph",
+    "codebase",
+    "search",
+    "indexing",
+    "dependency-graph",
+    "semantic-search",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

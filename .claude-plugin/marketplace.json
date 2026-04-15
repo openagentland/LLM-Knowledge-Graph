@@ -1,0 +1,18 @@
+{
+  "name": "llm-knowledge-graph",
+  "owner": {
+    "name": "John Martin",
+    "email": "john.itvn@gmail.com"
+  },
+  "metadata": {
+    "description": "LLM-Knowledge-Graph — codebase intelligence plugin for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "llm-knowledge-graph",
+      "source": "./",
+      "description": "Codebase intelligence — semantic search workflows, dependency graph analysis, and context artifact exploration",
+      "category": "development"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.pnpm-store
+.cache
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / editor
+.vscode
+.idea
+*.swp
+*.swo
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Coverage & logs
+coverage/
+*.log
+
+# AI / tool config (local)
+.qodo
+.claude
