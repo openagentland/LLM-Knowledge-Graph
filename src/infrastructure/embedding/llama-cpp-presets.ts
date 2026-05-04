@@ -7,7 +7,7 @@ export type LlamaCppPreset = {
 };
 
 export const LLAMA_CPP_PRESETS: Readonly<Record<string, LlamaCppPreset>> = {
-  "nomic-v1.5": {
+  "nomic-v1.5-q8": {
     contextLength: 2048,
     dimension: 768,
     downloadUrl:

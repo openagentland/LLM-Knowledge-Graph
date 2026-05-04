@@ -40,7 +40,7 @@ describe("MCP server e2e", () => {
       expect(result.capabilities).toHaveProperty("tools");
     });
 
-    it("lists lkg.status, lkg.index, and lkg.search tools", async () => {
+    it("lists lkg.status, lkg.index, lkg.search, lkg.symbols, and lkg.symbol tools", async () => {
       const initializedClient = await startInitializedClient();
 
       const result = await initializedClient.listTools();
@@ -52,6 +52,8 @@ describe("MCP server e2e", () => {
       expect(toolNames).toContain("lkg.status");
       expect(toolNames).toContain("lkg.index");
       expect(toolNames).toContain("lkg.search");
+      expect(toolNames).toContain("lkg.symbols");
+      expect(toolNames).toContain("lkg.symbol");
     });
   });
 
@@ -131,47 +133,106 @@ describe("MCP server e2e", () => {
       expect(payload.code).toBe("INDEX_NOT_READY");
     });
 
-    it("returns evidence from lkg.search after indexing", async () => {
+    it("returns an MCP tool error payload when lkg.symbols runs before indexing", async () => {
+      const initializedClient = await startInitializedClient();
+
+      const result = await initializedClient.callTool("lkg.symbols", {
+        query: "fixture",
+      });
+      const payload = parseToolTextPayload<{ code: string }>(result);
+
+      expect(result.isError).toBe(true);
+      expect(payload.code).toBe("INDEX_NOT_READY");
+    });
+
+    it("returns candidate-first symbol evidence after indexing", async () => {
       const initializedClient = await startInitializedClient();
 
       await initializedClient.callTool("lkg.index", { mode: "full" });
 
-      const result = await initializedClient.callTool("lkg.search", {
-        query: "MCP server fixture evidence",
-        top_k: 1,
+      const listResult = await initializedClient.callTool("lkg.symbols", {
+        path: "main.ts",
+        query: "fixture",
+        source_type: "code",
       });
-      const payload = parseToolTextPayload<{
+      const listPayload = parseToolTextPayload<{
         results: Array<{
-          evidence_id: string;
-          path: string;
-          provenance: {
+          container_name?: string;
+          evidence: {
+            code_location: {
+              end_line: number;
+              start_line: number;
+            };
             content_hash: string;
+            evidence_id: string;
             extractor: string;
-            index_run_id: string;
+            path: string;
           };
-          score?: number;
-          snippet: string;
+          index_run_id: string;
+          kind: string;
+          language: string | null;
+          name: string;
+          scope: string;
+          signature?: string;
           source_type: string;
-          start_line?: number;
-          end_line?: number;
-          section?: string;
-          offset?: number;
         }>;
-      }>(result);
-      const firstResult = payload.results[0];
+      }>(listResult);
+      const detailResult = await initializedClient.callTool("lkg.symbol", {
+        path: "main.ts",
+        symbol: "mcpFixtureEntry",
+      });
+      const detailPayload = parseToolTextPayload<{
+        candidates: Array<{
+          evidence: {
+            code_location: {
+              end_line: number;
+              start_line: number;
+            };
+            content_hash: string;
+            evidence_id: string;
+            extractor: string;
+            path: string;
+          };
+          index_run_id: string;
+          kind: string;
+          language: string | null;
+          name: string;
+          scope: string;
+          source_type: string;
+        }>;
+      }>(detailResult);
+      const firstListResult = listPayload.results[0];
+      const firstDetailResult = detailPayload.candidates[0];
 
-      expect(result.isError).not.toBe(true);
-      expect(payload.results).toHaveLength(1);
-      expect(firstResult).toBeDefined();
-      expect(firstResult?.evidence_id).toEqual(expect.any(String));
-      expect(firstResult?.path).toBeDefined();
-      expect(firstResult?.provenance.content_hash).toEqual(expect.any(String));
-      expect(firstResult?.provenance.extractor).toEqual(expect.any(String));
-      expect(firstResult?.provenance.index_run_id).toEqual(expect.any(String));
-      expect(firstResult?.snippet).toContain("MCP server");
-      expect(firstResult?.source_type).toEqual(expect.any(String));
-      expect(firstResult?.score).toEqual(expect.any(Number));
+      expect(listResult.isError).not.toBe(true);
+      expect(listPayload.results.length).toBeGreaterThan(0);
+      expect(firstListResult?.name).toBe("mcpFixtureEntry");
+      expect(firstListResult?.evidence.path).toBe("main.ts");
+      expect(firstListResult?.evidence.code_location.start_line).toBe(1);
+      expect(firstListResult?.evidence.extractor).toEqual(expect.any(String));
+      expect(firstListResult?.index_run_id).toEqual(expect.any(String));
+      expect(firstListResult?.source_type).toBe("code");
+
+      expect(detailResult.isError).not.toBe(true);
+      expect(detailPayload.candidates).toHaveLength(1);
+      expect(firstDetailResult?.name).toBe("mcpFixtureEntry");
+      expect(firstDetailResult?.evidence.path).toBe("main.ts");
+      expect(firstDetailResult?.evidence.code_location.end_line).toBeGreaterThanOrEqual(1);
     });
+
+    it("returns an MCP tool error payload for invalid lkg.symbol input", async () => {
+      const initializedClient = await startInitializedClient();
+
+      const result = await initializedClient.callTool("lkg.symbol", {
+        path: "main.ts",
+        symbol: "",
+      });
+      const content = result.content as Array<{ text?: string; type: string }>;
+
+      expect(result.isError).toBe(true);
+      expect(content[0]?.text).toContain("MCP error -32602");
+    });
+
   });
 
   describe("index lifecycle and validation", () => {

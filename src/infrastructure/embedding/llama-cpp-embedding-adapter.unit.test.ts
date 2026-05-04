@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-const { ensureModelFileMock, getLlamaMock, loadModelMock } = vi.hoisted(() => ({
+const { createEmbeddingContextMock, ensureModelFileMock, getLlamaMock, loadModelMock } = vi.hoisted(() => ({
+  createEmbeddingContextMock: vi.fn(),
   ensureModelFileMock: vi.fn(),
   getLlamaMock: vi.fn(),
   loadModelMock: vi.fn(),
@@ -21,11 +22,14 @@ import { LlamaCppEmbeddingAdapter } from "./llama-cpp-embedding-adapter.js";
 
 describe("LlamaCppEmbeddingAdapter", () => {
   it("downloads preset models via ensureModelFile", async () => {
-    const createEmbeddingContext = vi.fn().mockResolvedValue({
+    createEmbeddingContextMock.mockReset();
+    createEmbeddingContextMock.mockResolvedValue({
       getEmbeddingFor: vi.fn().mockResolvedValue({ vector: [0.1, 0.2] }),
     });
     loadModelMock.mockReset();
-    loadModelMock.mockResolvedValue({ createEmbeddingContext });
+    loadModelMock.mockResolvedValue({
+      createEmbeddingContext: createEmbeddingContextMock,
+    });
     getLlamaMock.mockReset();
     getLlamaMock.mockResolvedValue({ loadModel: loadModelMock });
     ensureModelFileMock.mockReset();
@@ -44,6 +48,7 @@ describe("LlamaCppEmbeddingAdapter", () => {
         },
         type: "preset",
       },
+      threads: 2,
     });
 
     await adapter.embedQuery("hello");
@@ -56,17 +61,23 @@ describe("LlamaCppEmbeddingAdapter", () => {
         filename: "preset.gguf",
       },
     });
+    expect(getLlamaMock).toHaveBeenCalledWith({
+      maxThreads: 2,
+    });
     expect(loadModelMock).toHaveBeenCalledWith({
       modelPath: "/tmp/models/preset.gguf",
     });
   });
 
   it("downloads custom URL models instead of throwing", async () => {
-    const createEmbeddingContext = vi.fn().mockResolvedValue({
+    createEmbeddingContextMock.mockReset();
+    createEmbeddingContextMock.mockResolvedValue({
       getEmbeddingFor: vi.fn().mockResolvedValue({ vector: [0.1, 0.2, 0.3] }),
     });
     loadModelMock.mockReset();
-    loadModelMock.mockResolvedValue({ createEmbeddingContext });
+    loadModelMock.mockResolvedValue({
+      createEmbeddingContext: createEmbeddingContextMock,
+    });
     getLlamaMock.mockReset();
     getLlamaMock.mockResolvedValue({ loadModel: loadModelMock });
     ensureModelFileMock.mockReset();
@@ -81,6 +92,7 @@ describe("LlamaCppEmbeddingAdapter", () => {
         type: "url",
         url: "https://example.com/models/custom.gguf",
       },
+      threads: 3,
     });
 
     const result = await adapter.embedQuery("hello");
@@ -108,6 +120,7 @@ describe("LlamaCppEmbeddingAdapter", () => {
         type: "url",
         url: "https://example.com/models/custom.gguf",
       },
+      threads: 1,
     });
 
     await expect(adapter.embedQuery("hello")).rejects.toThrow(
@@ -116,11 +129,14 @@ describe("LlamaCppEmbeddingAdapter", () => {
   });
 
   it("uses local model paths directly", async () => {
-    const createEmbeddingContext = vi.fn().mockResolvedValue({
+    createEmbeddingContextMock.mockReset();
+    createEmbeddingContextMock.mockResolvedValue({
       getEmbeddingFor: vi.fn().mockResolvedValue({ vector: [0.4, 0.5] }),
     });
     loadModelMock.mockReset();
-    loadModelMock.mockResolvedValue({ createEmbeddingContext });
+    loadModelMock.mockResolvedValue({
+      createEmbeddingContext: createEmbeddingContextMock,
+    });
     getLlamaMock.mockReset();
     getLlamaMock.mockResolvedValue({ loadModel: loadModelMock });
     ensureModelFileMock.mockReset();
@@ -134,6 +150,7 @@ describe("LlamaCppEmbeddingAdapter", () => {
         localPath: "/models/local.gguf",
         type: "local",
       },
+      threads: 4,
     });
 
     await adapter.embedQuery("hello");

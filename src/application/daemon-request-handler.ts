@@ -1,11 +1,17 @@
 import type { DaemonRequest, DaemonResponse } from "./dto/daemon.js";
 import type { StatusSnapshot } from "./dto/index-lifecycle.js";
+import type { CanonicalFactStorePort } from "./ports/canonical-fact-store-port.js";
+import type { DerivedFactStorePort } from "./ports/derived-fact-store-port.js";
 import type { EmbeddingPort } from "./ports/embedding-port.js";
 import type { IndexStatePort } from "./ports/index-state-port.js";
 import type { IngestionPipelinePort } from "./ports/ingestion-pipeline-port.js";
+import type { InternalGraphStorePort } from "./ports/internal-graph-store-port.js";
 import type { LoggerPort } from "./ports/logger-port.js";
 import type { RetrieverPort } from "./ports/retriever-port.js";
+import type { SymbolCandidateStorePort } from "./ports/symbol-candidate-store-port.js";
 import { GetStatusUseCase } from "./use-cases/get-status-use-case.js";
+import { GetSymbolUseCase } from "./use-cases/get-symbol-use-case.js";
+import { ListSymbolsUseCase } from "./use-cases/list-symbols-use-case.js";
 import { RunIndexUseCase } from "./use-cases/run-index-use-case.js";
 import { SearchKnowledgeUseCase } from "./use-cases/search-knowledge-use-case.js";
 import { ERROR_CODES, LkgError } from "../shared/errors/lkg-error.js";
@@ -16,9 +22,12 @@ export type DaemonRequestHandler = {
 };
 
 export function createDaemonRequestHandler(dependencies: {
+  canonicalFactStore: CanonicalFactStorePort;
+  derivedFactStore: DerivedFactStorePort;
   embedding: EmbeddingPort;
   indexStatePort: IndexStatePort;
   ingestionPipeline: IngestionPipelinePort;
+  internalGraphStore: InternalGraphStorePort;
   logger: LoggerPort;
   retriever: RetrieverPort;
   statusContext: {
@@ -27,6 +36,7 @@ export function createDaemonRequestHandler(dependencies: {
     indexScope: StatusSnapshot["indexScope"];
     watcherState: StatusSnapshot["watcherState"];
   };
+  symbolCandidateStore: SymbolCandidateStorePort;
   watcherRuntime?: {
     close(): Promise<void>;
   } | null;
@@ -86,6 +96,41 @@ export function createDaemonRequestHandler(dependencies: {
           return {
             result,
             type: "search.query",
+          };
+        }
+        case "symbols.query": {
+          const result = await new ListSymbolsUseCase(
+            dependencies.indexStatePort,
+            dependencies.symbolCandidateStore,
+            {
+              activeProjectIdentity:
+                dependencies.statusContext.activeProjectIdentity,
+              indexScope: dependencies.statusContext.indexScope,
+            },
+          ).execute(request.command);
+
+          return {
+            result,
+            type: "symbols.query",
+          };
+        }
+        case "symbol.get": {
+          const result = await new GetSymbolUseCase(
+            dependencies.indexStatePort,
+            dependencies.symbolCandidateStore,
+            dependencies.canonicalFactStore,
+            dependencies.derivedFactStore,
+            dependencies.internalGraphStore,
+            {
+              activeProjectIdentity:
+                dependencies.statusContext.activeProjectIdentity,
+              indexScope: dependencies.statusContext.indexScope,
+            },
+          ).execute(request.command);
+
+          return {
+            result,
+            type: "symbol.get",
           };
         }
         default:

@@ -140,6 +140,417 @@ describe("createMcpServer", () => {
     });
   });
 
+  it("registers symbol tools and maps candidate-first outputs", async () => {
+    const dependencies = createDependencies();
+    dependencies.daemonClient.request
+      .mockResolvedValueOnce({
+        result: {
+          results: [
+            {
+              confidence: 0.91,
+              containerName: "exports",
+              evidence: {
+                codeLocation: { endLine: 4, startLine: 1 },
+                contentHash: "hash-1",
+                evidenceId: "evidence-1",
+                extractor: "ast-grep:function_declaration",
+                path: "main.ts",
+              },
+              indexRunId: "run-3",
+              kind: "function_declaration",
+              language: "ts",
+              name: "mcpFixtureEntry",
+              ranking: {
+                exactNameMatch: true,
+                exactPathMatch: true,
+                kindMatch: false,
+                score: 10,
+              },
+              scope: "file",
+              signature: "function mcpFixtureEntry()",
+              sourceType: "code",
+            },
+          ],
+        },
+        type: "symbols.query",
+      } satisfies Extract<DaemonResponse, { type: "symbols.query" }>)
+      .mockResolvedValueOnce({
+        result: {
+          callers: [
+            {
+              confidence: 0.55,
+              containerName: "handlers",
+              evidence: {
+                codeLocation: { endLine: 12, startLine: 9 },
+                contentHash: "hash-caller",
+                evidenceId: "evidence-caller",
+                extractor: "derived-fact",
+                path: "main.ts",
+              },
+              indexRunId: "run-3",
+              kind: "function_declaration",
+              language: "ts",
+              name: "mcpFixtureEntry",
+              relationshipKind: "caller-callee-candidate",
+              scope: "file",
+              sourceType: "code",
+            },
+          ],
+          candidates: [
+            {
+              confidence: 0.91,
+              evidence: {
+                codeLocation: { endLine: 4, startLine: 1 },
+                contentHash: "hash-1",
+                evidenceId: "evidence-1",
+                extractor: "ast-grep:function_declaration",
+                path: "main.ts",
+              },
+              indexRunId: "run-3",
+              kind: "function_declaration",
+              language: "ts",
+              name: "mcpFixtureEntry",
+              ranking: {
+                exactNameMatch: true,
+                exactPathMatch: true,
+                kindMatch: false,
+                score: 10,
+              },
+              scope: "file",
+              sourceType: "code",
+            },
+          ],
+          references: [
+            {
+              confidence: 0.7,
+              evidence: {
+                codeLocation: { endLine: 20, startLine: 18 },
+                contentHash: "hash-ref",
+                evidenceId: "evidence-ref",
+                extractor: "derived-fact",
+                path: "main.ts",
+              },
+              indexRunId: "run-3",
+              kind: "function_declaration",
+              label: "toId",
+              language: "ts",
+              name: "mcpFixtureEntry",
+              scope: "file",
+              sourceType: "code",
+            },
+          ],
+          repoContext: [
+            {
+              confidence: 0.6,
+              evidence: {
+                codeLocation: { endLine: 1, startLine: 1 },
+                contentHash: "hash-repo",
+                evidenceId: "evidence-repo",
+                extractor: "graph",
+                path: "package.json",
+              },
+              indexRunId: "run-3",
+              kind: "function_declaration",
+              label: "build",
+              language: "ts",
+              name: "mcpFixtureEntry",
+              scope: "file",
+              sourceType: "code",
+            },
+          ],
+          symbol: {
+            confidence: 1,
+            evidence: {
+              codeLocation: { endLine: 4, startLine: 1 },
+              contentHash: "hash-1",
+              evidenceId: "evidence-1",
+              extractor: "ast-grep:function_declaration",
+              path: "main.ts",
+            },
+            indexRunId: "run-3",
+            kind: "function_declaration",
+            language: "ts",
+            name: "mcpFixtureEntry",
+            ranking: {
+              exactNameMatch: true,
+              exactPathMatch: true,
+              kindMatch: false,
+              score: 10,
+            },
+            scope: "file",
+            sourceType: "code",
+          },
+          tests: [
+            {
+              confidence: 0.5,
+              evidence: {
+                codeLocation: { endLine: 30, startLine: 24 },
+                contentHash: "hash-test",
+                evidenceId: "evidence-test",
+                extractor: "graph",
+                path: "main.test.ts",
+              },
+              indexRunId: "run-3",
+              kind: "function_declaration",
+              label: "main test",
+              language: "ts",
+              name: "mcpFixtureEntry",
+              scope: "file",
+              sourceType: "code",
+            },
+          ],
+        },
+        type: "symbol.get",
+      } satisfies Extract<DaemonResponse, { type: "symbol.get" }>);
+
+    const server = createMcpServer(dependencies);
+    const symbolsTool = getTool(server, "lkg.symbols");
+    const symbolTool = getTool(server, "lkg.symbol");
+
+    const listResult = await symbolsTool.handler({
+      path: "main.ts",
+      query: "fixture",
+      source_type: "code",
+    });
+    const detailResult = await symbolTool.handler({
+      path: "main.ts",
+      symbol: "mcpFixtureEntry",
+    });
+
+    expect(dependencies.daemonClient.request).toHaveBeenNthCalledWith(1, {
+      command: { kind: undefined, path: "main.ts", query: "fixture", sourceType: "code" },
+      type: "symbols.query",
+    });
+    expect(dependencies.daemonClient.request).toHaveBeenNthCalledWith(2, {
+      command: { path: "main.ts", symbol: "mcpFixtureEntry" },
+      type: "symbol.get",
+    });
+    expect(listResult.structuredContent).toEqual({
+      results: [
+        {
+          confidence: 0.91,
+          container_name: "exports",
+          evidence: {
+            code_location: { end_line: 4, start_line: 1 },
+            content_hash: "hash-1",
+            evidence_id: "evidence-1",
+            extractor: "ast-grep:function_declaration",
+            path: "main.ts",
+          },
+          index_run_id: "run-3",
+          kind: "function_declaration",
+          language: "ts",
+          name: "mcpFixtureEntry",
+          ranking: {
+            exact_name_match: true,
+            exact_path_match: true,
+            kind_match: false,
+            score: 10,
+          },
+          scope: "file",
+          signature: "function mcpFixtureEntry()",
+          source_type: "code",
+        },
+      ],
+    });
+    expect(detailResult.structuredContent).toEqual({
+      callers: [
+        {
+          confidence: 0.55,
+          container_name: "handlers",
+          evidence: {
+            code_location: { end_line: 12, start_line: 9 },
+            content_hash: "hash-caller",
+            evidence_id: "evidence-caller",
+            extractor: "derived-fact",
+            path: "main.ts",
+          },
+          index_run_id: "run-3",
+          kind: "function_declaration",
+          language: "ts",
+          name: "mcpFixtureEntry",
+          ranking: undefined,
+          relationship_kind: "caller-callee-candidate",
+          scope: "file",
+          signature: undefined,
+          source_type: "code",
+        },
+      ],
+      candidates: [
+        {
+          confidence: 0.91,
+          container_name: undefined,
+          evidence: {
+            code_location: { end_line: 4, start_line: 1 },
+            content_hash: "hash-1",
+            evidence_id: "evidence-1",
+            extractor: "ast-grep:function_declaration",
+            path: "main.ts",
+          },
+          index_run_id: "run-3",
+          kind: "function_declaration",
+          language: "ts",
+          name: "mcpFixtureEntry",
+          ranking: {
+            exact_name_match: true,
+            exact_path_match: true,
+            kind_match: false,
+            score: 10,
+          },
+          scope: "file",
+          signature: undefined,
+          source_type: "code",
+        },
+      ],
+      references: [
+        {
+          confidence: 0.7,
+          container_name: undefined,
+          evidence: {
+            code_location: { end_line: 20, start_line: 18 },
+            content_hash: "hash-ref",
+            evidence_id: "evidence-ref",
+            extractor: "derived-fact",
+            path: "main.ts",
+          },
+          index_run_id: "run-3",
+          kind: "function_declaration",
+          label: "toId",
+          language: "ts",
+          name: "mcpFixtureEntry",
+          ranking: undefined,
+          scope: "file",
+          signature: undefined,
+          source_type: "code",
+        },
+      ],
+      repo_context: [
+        {
+          confidence: 0.6,
+          container_name: undefined,
+          evidence: {
+            code_location: { end_line: 1, start_line: 1 },
+            content_hash: "hash-repo",
+            evidence_id: "evidence-repo",
+            extractor: "graph",
+            path: "package.json",
+          },
+          index_run_id: "run-3",
+          kind: "function_declaration",
+          label: "build",
+          language: "ts",
+          name: "mcpFixtureEntry",
+          ranking: undefined,
+          scope: "file",
+          signature: undefined,
+          source_type: "code",
+        },
+      ],
+      symbol: {
+        confidence: 1,
+        container_name: undefined,
+        evidence: {
+          code_location: { end_line: 4, start_line: 1 },
+          content_hash: "hash-1",
+          evidence_id: "evidence-1",
+          extractor: "ast-grep:function_declaration",
+          path: "main.ts",
+        },
+        index_run_id: "run-3",
+        kind: "function_declaration",
+        language: "ts",
+        name: "mcpFixtureEntry",
+        ranking: {
+          exact_name_match: true,
+          exact_path_match: true,
+          kind_match: false,
+          score: 10,
+        },
+        scope: "file",
+        signature: undefined,
+        source_type: "code",
+      },
+      tests: [
+        {
+          confidence: 0.5,
+          container_name: undefined,
+          evidence: {
+            code_location: { end_line: 30, start_line: 24 },
+            content_hash: "hash-test",
+            evidence_id: "evidence-test",
+            extractor: "graph",
+            path: "main.test.ts",
+          },
+          index_run_id: "run-3",
+          kind: "function_declaration",
+          label: "main test",
+          language: "ts",
+          name: "mcpFixtureEntry",
+          ranking: undefined,
+          scope: "file",
+          signature: undefined,
+          source_type: "code",
+        },
+      ],
+    });
+  });
+
+  it("maps explicit ambiguous symbol errors into MCP tool errors", async () => {
+    const dependencies = createDependencies();
+    dependencies.daemonClient.request.mockRejectedValue(
+      new LkgError(ERROR_CODES.AMBIGUOUS_SYMBOL, "Symbol is ambiguous", {
+        candidates: [
+          {
+            confidence: 0.8,
+            evidence: {
+              codeLocation: { endLine: 4, startLine: 1 },
+              contentHash: "hash-1",
+              evidenceId: "evidence-1",
+              extractor: "ast-grep:function_declaration",
+              path: "main.ts",
+            },
+            indexRunId: "run-3",
+            kind: "function_declaration",
+            language: "ts",
+            name: "mcpFixtureEntry",
+            scope: "file",
+            sourceType: "code",
+          },
+        ],
+      }),
+    );
+
+    const server = createMcpServer(dependencies);
+    const tool = getTool(server, "lkg.symbol");
+    const result = await tool.handler({ path: "main.ts", symbol: "mcpFixtureEntry" });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({
+      code: ERROR_CODES.AMBIGUOUS_SYMBOL,
+      details: {
+        candidates: [
+          {
+            confidence: 0.8,
+            evidence: {
+              codeLocation: { endLine: 4, startLine: 1 },
+              contentHash: "hash-1",
+              evidenceId: "evidence-1",
+              extractor: "ast-grep:function_declaration",
+              path: "main.ts",
+            },
+            indexRunId: "run-3",
+            kind: "function_declaration",
+            language: "ts",
+            name: "mcpFixtureEntry",
+            scope: "file",
+            sourceType: "code",
+          },
+        ],
+      },
+      message: "Symbol is ambiguous",
+    });
+  });
+
   it("maps LkgError and unknown errors into tool errors", async () => {
     const knownDependencies = createDependencies();
     knownDependencies.daemonClient.request.mockRejectedValue(
@@ -159,7 +570,7 @@ describe("createMcpServer", () => {
     const unknownDependencies = createDependencies();
     unknownDependencies.daemonClient.request.mockRejectedValue(new Error("boom"));
     const unknownServer = createMcpServer(unknownDependencies);
-    const unknownTool = getTool(unknownServer, "lkg.search");
+    const unknownTool = getTool(unknownServer, "lkg.symbols");
     const unknownErrorResult = await unknownTool.handler({ query: "boom" });
 
     expect(unknownErrorResult.isError).toBe(true);

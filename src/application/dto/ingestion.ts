@@ -1,4 +1,7 @@
-export type SourceType = "code" | "doc";
+import type { StructuredObservation } from "./structured-observations.js";
+import type { CodeLocation, SourceType } from "../../domain/index.js";
+
+export type { CodeLocation, SourceType };
 
 export type ScanSkipReason =
   | "ignored"
@@ -24,11 +27,6 @@ export type ScanResult = {
   skipped: SkippedPath[];
 };
 
-export type CodeLocation = {
-  endLine: number;
-  startLine: number;
-};
-
 export type DocLocation = {
   offset?: number;
   section?: string;
@@ -38,6 +36,44 @@ export type StructuralCodeBlock = {
   content: string;
   kind: string;
   location: CodeLocation;
+};
+
+export type FileImportObservation = {
+  isPackage: boolean;
+  specifier: string;
+};
+
+export type PackageDependencyObservation = {
+  name: string;
+  version: string;
+};
+
+export type PackageScriptObservation = {
+  command: string;
+  name: string;
+};
+
+export type WorkflowStepObservation = {
+  command?: string;
+  name: string;
+  scriptName?: string;
+};
+
+export type QualityGateObservation = {
+  command: string;
+  scriptName?: string;
+  tool: string;
+};
+
+export type SymbolCandidate = {
+  codeLocation: CodeLocation;
+  containerName?: string;
+  contentHash: string;
+  evidenceId: string;
+  extractor: string;
+  kind: string;
+  name: string;
+  signature?: string;
 };
 
 export type ChunkingOptions = {
@@ -51,10 +87,17 @@ export type ChunkingOptions = {
 
 export type ParsedDocument = {
   content: string;
+  imports?: FileImportObservation[];
   language: string | null;
+  packageDependencies?: PackageDependencyObservation[];
+  packageName?: string;
+  packageScripts?: PackageScriptObservation[];
   path: string;
+  qualityGates?: QualityGateObservation[];
   sourceType: SourceType;
   structuralBlocks?: StructuralCodeBlock[];
+  symbolCandidates?: SymbolCandidate[];
+  workflowSteps?: WorkflowStepObservation[];
 };
 
 export type ChunkProvenance = {
@@ -86,6 +129,7 @@ export type IngestionSummary = {
   counters: IngestionCounters;
   filesPurged: number;
   filesUnchanged: number;
+  observations: StructuredObservation[];
   progress: {
     batchIndex: number;
     batchTotal: number;

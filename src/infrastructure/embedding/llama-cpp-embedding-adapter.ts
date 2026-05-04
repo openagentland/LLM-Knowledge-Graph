@@ -24,6 +24,7 @@ export class LlamaCppEmbeddingAdapter implements EmbeddingPort {
       logger?: LoggerPort;
       modelDir: string;
       resolvedModel: ResolvedLlamaCppModel;
+      threads: number;
     },
   ) {}
 
@@ -78,7 +79,9 @@ export class LlamaCppEmbeddingAdapter implements EmbeddingPort {
     }
 
     const { getLlama } = await import("node-llama-cpp");
-    const llama = await getLlama();
+    const llama = await getLlama({
+      maxThreads: this.options.threads,
+    });
 
     const modelPath = await this.resolveModelPath();
     this.options.logger?.info("Loading embedding model", {

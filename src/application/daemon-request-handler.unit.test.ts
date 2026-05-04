@@ -2,8 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDaemonRequestHandler } from "../../src/application/daemon-request-handler.js";
 import type { StatusSnapshot } from "../../src/application/dto/index-lifecycle.js";
+import type { CanonicalFactStorePort } from "../../src/application/ports/canonical-fact-store-port.js";
+import type { DerivedFactStorePort } from "../../src/application/ports/derived-fact-store-port.js";
 import type { IndexStatePort } from "../../src/application/ports/index-state-port.js";
+import type { InternalGraphStorePort } from "../../src/application/ports/internal-graph-store-port.js";
 import type { LoggerPort } from "../../src/application/ports/logger-port.js";
+import type { SymbolCandidateStorePort } from "../../src/application/ports/symbol-candidate-store-port.js";
 
 function createLogger(): LoggerPort & {
   debug: ReturnType<typeof vi.fn>;
@@ -48,6 +52,43 @@ function createIndexStatePort(
   };
 }
 
+function createSymbolCandidateStore(): SymbolCandidateStorePort {
+  return {
+    clear: vi.fn(),
+    deleteByPath: vi.fn(),
+    list: vi.fn().mockResolvedValue([]),
+    upsert: vi.fn(),
+  };
+}
+
+function createCanonicalFactStore(): CanonicalFactStorePort {
+  return {
+    clear: vi.fn(),
+    deleteByPath: vi.fn(),
+    list: vi.fn().mockResolvedValue([]),
+    upsert: vi.fn(),
+  };
+}
+
+function createDerivedFactStore(): DerivedFactStorePort {
+  return {
+    clear: vi.fn(),
+    deleteByPath: vi.fn(),
+    list: vi.fn().mockResolvedValue([]),
+    upsert: vi.fn(),
+  };
+}
+
+function createInternalGraphStore(): InternalGraphStorePort {
+  return {
+    clear: vi.fn(),
+    deleteByPath: vi.fn(),
+    listByPath: vi.fn().mockResolvedValue({ edges: [], nodes: [] }),
+    read: vi.fn().mockResolvedValue({ edges: [], nodes: [] }),
+    replace: vi.fn(),
+  };
+}
+
 describe("createDaemonRequestHandler", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -55,12 +96,16 @@ describe("createDaemonRequestHandler", () => {
 
   it("returns daemon health-check payload", async () => {
     const handler = createDaemonRequestHandler({
+      canonicalFactStore: createCanonicalFactStore(),
+      derivedFactStore: createDerivedFactStore(),
       embedding: { embedChunks: vi.fn(), embedQuery: vi.fn() },
       indexStatePort: createIndexStatePort(),
       ingestionPipeline: { run: vi.fn() },
+      internalGraphStore: createInternalGraphStore(),
       logger: createLogger(),
       retriever: { retrieve: vi.fn() },
       statusContext: createStatusContext(),
+      symbolCandidateStore: createSymbolCandidateStore(),
     });
 
     const response = await handler.handle({ type: "health.check" });
@@ -91,12 +136,16 @@ describe("createDaemonRequestHandler", () => {
     });
 
     const handler = createDaemonRequestHandler({
+      canonicalFactStore: createCanonicalFactStore(),
+      derivedFactStore: createDerivedFactStore(),
       embedding: { embedChunks: vi.fn(), embedQuery: vi.fn() },
       indexStatePort,
       ingestionPipeline: { run: vi.fn() },
+      internalGraphStore: createInternalGraphStore(),
       logger: createLogger(),
       retriever: { retrieve: vi.fn() },
       statusContext: createStatusContext(),
+      symbolCandidateStore: createSymbolCandidateStore(),
     });
 
     const response = await handler.handle({ type: "status" });
@@ -158,12 +207,16 @@ describe("createDaemonRequestHandler", () => {
     });
 
     const handler = createDaemonRequestHandler({
+      canonicalFactStore: createCanonicalFactStore(),
+      derivedFactStore: createDerivedFactStore(),
       embedding: { embedChunks: vi.fn(), embedQuery: vi.fn() },
       indexStatePort,
       ingestionPipeline: { run },
+      internalGraphStore: createInternalGraphStore(),
       logger: createLogger(),
       retriever: { retrieve: vi.fn() },
       statusContext: createStatusContext(),
+      symbolCandidateStore: createSymbolCandidateStore(),
     });
 
     const response = await handler.handle({
@@ -215,12 +268,16 @@ describe("createDaemonRequestHandler", () => {
     });
 
     const handler = createDaemonRequestHandler({
+      canonicalFactStore: createCanonicalFactStore(),
+      derivedFactStore: createDerivedFactStore(),
       embedding: { embedChunks: vi.fn(), embedQuery },
       indexStatePort,
       ingestionPipeline: { run: vi.fn() },
+      internalGraphStore: createInternalGraphStore(),
       logger: createLogger(),
       retriever: { retrieve },
       statusContext: createStatusContext(),
+      symbolCandidateStore: createSymbolCandidateStore(),
     });
 
     const response = await handler.handle({
@@ -235,15 +292,271 @@ describe("createDaemonRequestHandler", () => {
     expect(response.type).toBe("search.query");
   });
 
-  it("closes watcher runtime when present", async () => {
-    const close = vi.fn().mockResolvedValue(undefined);
+  it("routes symbols.query to the symbol candidate store", async () => {
+    const list = vi.fn().mockResolvedValue([
+      {
+        codeLocation: { endLine: 2, startLine: 1 },
+        contentHash: "hash-1",
+        evidenceId: "evidence-1",
+        extractor: "ast-grep:function_declaration",
+        fileFingerprint: "fp-1",
+        indexRunId: "run-3",
+        kind: "function_declaration",
+        language: "ts",
+        name: "mcpFixtureEntry",
+        path: "main.ts",
+        scope: "file",
+        sourceType: "code",
+      },
+    ]);
+    const indexStatePort = createIndexStatePort({
+      getStatus: vi.fn().mockResolvedValue({
+        activeProjectIdentity: "project-a",
+        counters: { errors: 0, filesIndexed: 1, filesTotal: 1 },
+        indexRunId: "run-3",
+        indexScope: "shared",
+        lastError: null,
+        lastIndexedAt: "2026-05-03T00:00:00.000Z",
+        needsReindex: false,
+        pendingChanges: false,
+        state: "idle",
+        watcherState: "enabled",
+      } satisfies StatusSnapshot),
+    });
+
     const handler = createDaemonRequestHandler({
+      canonicalFactStore: createCanonicalFactStore(),
+      derivedFactStore: createDerivedFactStore(),
       embedding: { embedChunks: vi.fn(), embedQuery: vi.fn() },
-      indexStatePort: createIndexStatePort(),
+      indexStatePort,
       ingestionPipeline: { run: vi.fn() },
+      internalGraphStore: createInternalGraphStore(),
       logger: createLogger(),
       retriever: { retrieve: vi.fn() },
       statusContext: createStatusContext(),
+      symbolCandidateStore: {
+        clear: vi.fn(),
+        deleteByPath: vi.fn(),
+        list,
+        upsert: vi.fn(),
+      },
+    });
+
+    const response = await handler.handle({
+      command: { path: "main.ts", query: "fixture", sourceType: "code" },
+      type: "symbols.query",
+    });
+
+    expect(list).toHaveBeenCalledWith({
+      kind: undefined,
+      path: "main.ts",
+      sourceType: "code",
+    });
+    expect(response.type).toBe("symbols.query");
+    if (response.type !== "symbols.query") {
+      throw new Error("unexpected response type");
+    }
+    expect(response.result.results).toHaveLength(1);
+    expect(response.result.results[0]?.name).toBe("mcpFixtureEntry");
+  });
+
+  it("routes symbol.get to a resolved symbol payload for an exact unique match", async () => {
+    const list = vi.fn().mockResolvedValue([
+      {
+        codeLocation: { endLine: 2, startLine: 1 },
+        confidence: 0.8,
+        contentHash: "hash-1",
+        evidenceId: "evidence-1",
+        extractor: "ast-grep:function_declaration",
+        fileFingerprint: "fp-1",
+        indexRunId: "run-3",
+        kind: "function_declaration",
+        language: "ts",
+        name: "mcpFixtureEntry",
+        path: "main.ts",
+        ranking: {
+          exactNameMatch: true,
+          exactPathMatch: true,
+          kindMatch: false,
+          score: 10,
+        },
+        scope: "file",
+        sourceType: "code",
+      },
+      {
+        codeLocation: { endLine: 4, startLine: 3 },
+        contentHash: "hash-2",
+        evidenceId: "evidence-2",
+        extractor: "ast-grep:function_declaration",
+        fileFingerprint: "fp-1",
+        indexRunId: "run-3",
+        kind: "function_declaration",
+        language: "ts",
+        name: "mcpFixtureEntryHelper",
+        path: "main.ts",
+        scope: "file",
+        sourceType: "code",
+      },
+    ]);
+    const indexStatePort = createIndexStatePort({
+      getStatus: vi.fn().mockResolvedValue({
+        activeProjectIdentity: "project-a",
+        counters: { errors: 0, filesIndexed: 1, filesTotal: 1 },
+        indexRunId: "run-3",
+        indexScope: "shared",
+        lastError: null,
+        lastIndexedAt: "2026-05-03T00:00:00.000Z",
+        needsReindex: false,
+        pendingChanges: false,
+        state: "idle",
+        watcherState: "enabled",
+      } satisfies StatusSnapshot),
+    });
+
+    const handler = createDaemonRequestHandler({
+      canonicalFactStore: {
+        ...createCanonicalFactStore(),
+        list: vi.fn().mockResolvedValue([]),
+      },
+      derivedFactStore: createDerivedFactStore(),
+      embedding: { embedChunks: vi.fn(), embedQuery: vi.fn() },
+      indexStatePort,
+      ingestionPipeline: { run: vi.fn() },
+      internalGraphStore: createInternalGraphStore(),
+      logger: createLogger(),
+      retriever: { retrieve: vi.fn() },
+      statusContext: createStatusContext(),
+      symbolCandidateStore: {
+        clear: vi.fn(),
+        deleteByPath: vi.fn(),
+        list,
+        upsert: vi.fn(),
+      },
+    });
+
+    const response = await handler.handle({
+      command: { path: "main.ts", symbol: "mcpFixtureEntry" },
+      type: "symbol.get",
+    });
+
+    expect(response.type).toBe("symbol.get");
+    if (response.type !== "symbol.get") {
+      throw new Error("unexpected response type");
+    }
+    expect(response.result.candidates).toHaveLength(1);
+    expect(response.result.candidates[0]?.name).toBe("mcpFixtureEntry");
+    expect("symbol" in response.result && response.result.symbol?.name).toBe(
+      "mcpFixtureEntry",
+    );
+  });
+
+  it("surfaces explicit ambiguity errors for duplicate top-ranked symbol matches", async () => {
+    const list = vi.fn().mockResolvedValue([
+      {
+        codeLocation: { endLine: 2, startLine: 1 },
+        confidence: 0.8,
+        contentHash: "hash-1",
+        evidenceId: "evidence-1",
+        extractor: "ast-grep:function_declaration",
+        fileFingerprint: "fp-1",
+        indexRunId: "run-3",
+        kind: "function_declaration",
+        language: "ts",
+        name: "mcpFixtureEntry",
+        path: "main.ts",
+        ranking: {
+          exactNameMatch: true,
+          exactPathMatch: true,
+          kindMatch: false,
+          score: 10,
+        },
+        scope: "file",
+        sourceType: "code",
+      },
+      {
+        codeLocation: { endLine: 6, startLine: 5 },
+        confidence: 0.8,
+        contentHash: "hash-2",
+        evidenceId: "evidence-2",
+        extractor: "ts-js:semantic",
+        fileFingerprint: "fp-2",
+        indexRunId: "run-3",
+        kind: "function_declaration",
+        language: "ts",
+        name: "mcpFixtureEntry",
+        path: "main.ts",
+        ranking: {
+          exactNameMatch: true,
+          exactPathMatch: true,
+          kindMatch: false,
+          score: 10,
+        },
+        scope: "file",
+        sourceType: "code",
+      },
+    ]);
+    const indexStatePort = createIndexStatePort({
+      getStatus: vi.fn().mockResolvedValue({
+        activeProjectIdentity: "project-a",
+        counters: { errors: 0, filesIndexed: 1, filesTotal: 1 },
+        indexRunId: "run-3",
+        indexScope: "shared",
+        lastError: null,
+        lastIndexedAt: "2026-05-03T00:00:00.000Z",
+        needsReindex: false,
+        pendingChanges: false,
+        state: "idle",
+        watcherState: "enabled",
+      } satisfies StatusSnapshot),
+    });
+
+    const handler = createDaemonRequestHandler({
+      canonicalFactStore: createCanonicalFactStore(),
+      derivedFactStore: createDerivedFactStore(),
+      embedding: { embedChunks: vi.fn(), embedQuery: vi.fn() },
+      indexStatePort,
+      ingestionPipeline: { run: vi.fn() },
+      internalGraphStore: createInternalGraphStore(),
+      logger: createLogger(),
+      retriever: { retrieve: vi.fn() },
+      statusContext: createStatusContext(),
+      symbolCandidateStore: {
+        clear: vi.fn(),
+        deleteByPath: vi.fn(),
+        list,
+        upsert: vi.fn(),
+      },
+    });
+
+    await expect(
+      handler.handle({
+        command: { path: "main.ts", symbol: "mcpFixtureEntry" },
+        type: "symbol.get",
+      }),
+    ).rejects.toMatchObject({
+      code: "AMBIGUOUS_SYMBOL",
+      details: {
+        candidates: [
+          { evidence: { evidenceId: "evidence-1" }, name: "mcpFixtureEntry" },
+          { evidence: { evidenceId: "evidence-2" }, name: "mcpFixtureEntry" },
+        ],
+      },
+    });
+  });
+
+  it("closes watcher runtime when present", async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    const handler = createDaemonRequestHandler({
+      canonicalFactStore: createCanonicalFactStore(),
+      derivedFactStore: createDerivedFactStore(),
+      embedding: { embedChunks: vi.fn(), embedQuery: vi.fn() },
+      indexStatePort: createIndexStatePort(),
+      ingestionPipeline: { run: vi.fn() },
+      internalGraphStore: createInternalGraphStore(),
+      logger: createLogger(),
+      retriever: { retrieve: vi.fn() },
+      statusContext: createStatusContext(),
+      symbolCandidateStore: createSymbolCandidateStore(),
       watcherRuntime: { close },
     });
 

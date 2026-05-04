@@ -14,6 +14,7 @@ import swift from "@ast-grep/lang-swift";
 import { Lang, parse, registerDynamicLanguage } from "@ast-grep/napi";
 import type { DynamicLangRegistrations, SgNode } from "@ast-grep/napi";
 import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 
 import type {
   ParsedDocument,
@@ -53,13 +54,19 @@ export class FallbackParser implements ParserPort {
 
     return {
       content,
+      imports: inferImports(candidate.path, content),
       language,
+      packageDependencies: inferPackageDependencies(candidate.path, content),
+      packageName: inferPackageName(candidate.path, content),
+      packageScripts: inferPackageScripts(candidate.path, content),
       path: candidate.path,
+      qualityGates: inferQualityGates(candidate.path, content),
       sourceType: candidate.sourceType,
       structuralBlocks:
         candidate.sourceType === "code"
           ? parseStructuralBlocks(language, content)
           : undefined,
+      workflowSteps: inferWorkflowSteps(candidate.path, content),
     };
   }
 }
@@ -154,4 +161,126 @@ function resolveLanguage(path: string): string | null {
   }
 
   return extension;
+}
+
+function inferImports(path: string, content: string) {
+  if (!/\.(?:[cm]?[jt]sx?|mts|cts)$/u.test(path)) {
+    return [];
+  }
+
+  const matches = Array.from(
+    content.matchAll(/(?:import|export)\s+(?:[^"']+?\s+from\s+)?["']([^"']+)["']/gu),
+  );
+  return matches.map((match) => ({
+    isPackage: !match[1].startsWith("."),
+    specifier: match[1],
+  }));
+}
+
+function inferPackageName(path: string, content: string): string | undefined {
+  if (basename(path) !== "package.json") {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(content) as { name?: string };
+    return parsed.name;
+  } catch {
+    return undefined;
+  }
+}
+
+function inferPackageDependencies(path: string, content: string) {
+  if (basename(path) !== "package.json") {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(content) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+      peerDependencies?: Record<string, string>;
+    };
+    return [
+      ...Object.entries(parsed.dependencies ?? {}),
+      ...Object.entries(parsed.devDependencies ?? {}),
+      ...Object.entries(parsed.peerDependencies ?? {}),
+    ].map(([name, version]) => ({ name, version }));
+  } catch {
+    return [];
+  }
+}
+
+function inferPackageScripts(path: string, content: string) {
+  if (basename(path) !== "package.json") {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(content) as { scripts?: Record<string, string> };
+    return Object.entries(parsed.scripts ?? {}).map(([name, command]) => ({
+      command,
+      name,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function inferWorkflowSteps(path: string, content: string) {
+  if (!path.startsWith(".github/workflows/") || !/\.ya?ml$/u.test(path)) {
+    return [];
+  }
+
+  const lines = content.split("\n");
+  const steps: Array<{ command?: string; name: string; scriptName?: string }> = [];
+  let currentName: string | undefined;
+
+  for (const line of lines) {
+    const nameMatch = line.match(/^\s*-\s*name:\s*(.+)$/u);
+    const name = nameMatch?.[1];
+    if (name !== undefined) {
+      currentName = name.trim();
+      continue;
+    }
+
+    const runMatch = line.match(/^\s*run:\s*(.+)$/u);
+    const commandValue = runMatch?.[1];
+    if (commandValue !== undefined) {
+      const command = commandValue.trim();
+      const scriptMatch = command.match(/npm\s+run\s+([\w:-]+)/u);
+      steps.push({
+        command,
+        name: currentName ?? command,
+        scriptName: scriptMatch?.[1],
+      });
+      currentName = undefined;
+    }
+  }
+
+  return steps;
+}
+
+function inferQualityGates(path: string, content: string) {
+  if (basename(path) === "package.json") {
+    return inferPackageScripts(path, content)
+      .filter((script) => /(?:lint|test|typecheck|check)/u.test(script.name))
+      .map((script) => ({
+        command: script.command,
+        scriptName: script.name,
+        tool: "package-script",
+      }));
+  }
+
+  if (path.startsWith(".github/workflows/") && /\.ya?ml$/u.test(path)) {
+    return inferWorkflowSteps(path, content)
+      .filter((step) => step.command !== undefined)
+      .map((step) => ({
+        command: step.command!,
+        scriptName: step.scriptName,
+        tool: "workflow-step",
+      }));
+  }
+
+  return [];
 }

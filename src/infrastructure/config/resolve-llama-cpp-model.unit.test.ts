@@ -4,7 +4,7 @@ import { resolveLlamaCppModel } from "./resolve-llama-cpp-model.js";
 
 describe("resolveLlamaCppModel", () => {
   it("resolves preset URIs", () => {
-    expect(resolveLlamaCppModel("preset:nomic-v1.5")).toMatchObject({
+    expect(resolveLlamaCppModel("preset:nomic-v1.5-q8")).toMatchObject({
       contextLength: 2048,
       dimension: 768,
       type: "preset",

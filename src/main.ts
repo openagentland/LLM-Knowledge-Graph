@@ -14,8 +14,12 @@ import {
 import type { DaemonClientPort } from "./application/ports/daemon-client-port.js";
 import type { EmbeddingPort } from "./application/ports/embedding-port.js";
 import type { IngestionPipelinePort } from "./application/ports/ingestion-pipeline-port.js";
+import type { LanguageRegistryPort } from "./application/ports/language-registry-port.js";
 import type { LoggerPort } from "./application/ports/logger-port.js";
 import type { RetrieverPort } from "./application/ports/retriever-port.js";
+import type { StructuredAnalyzerRegistryPort } from "./application/ports/structured-analyzer-registry-port.js";
+import type { StructuredObservationStorePort } from "./application/ports/structured-observation-store-port.js";
+import type { SymbolCandidateStorePort } from "./application/ports/symbol-candidate-store-port.js";
 import type { VectorStorePort } from "./application/ports/vector-store-port.js";
 import { DefaultChunker } from "./infrastructure/chunking/default-chunker.js";
 import type { LkgConfig } from "./infrastructure/config/load-config.js";
@@ -24,13 +28,26 @@ import { resolveGitBranch } from "./infrastructure/config/resolve-git-branch.js"
 import { ensureDaemonRunning } from "./infrastructure/daemon/ensure-daemon-running.js";
 import { SocketDaemonClient } from "./infrastructure/daemon/socket-daemon-client.js";
 import { LlamaCppEmbeddingAdapter } from "./infrastructure/embedding/llama-cpp-embedding-adapter.js";
+import { AstGrepRuleLoader } from "./infrastructure/indexing/ast-grep-rule-loader.js";
+import { AstGrepStructuredAnalyzer } from "./infrastructure/indexing/ast-grep-structured-analyzer.js";
 import { DefaultIngestionPipeline } from "./infrastructure/indexing/default-ingestion-pipeline.js";
+import { DefaultLanguageRegistry } from "./infrastructure/indexing/default-language-registry.js";
+import { DefaultStructuredAnalyzerRegistry } from "./infrastructure/indexing/default-structured-analyzer-registry.js";
+import { GenericStructuredAnalyzer } from "./infrastructure/indexing/generic-structured-analyzer.js";
+import { InternalGraphProjector } from "./infrastructure/indexing/internal-graph-projector.js";
+import { RepoArtifactAnalyzer } from "./infrastructure/indexing/repo-artifact-analyzer.js";
+import { TsJsDeepAnalyzer } from "./infrastructure/indexing/ts-js-deep-analyzer.js";
 import { createLogger } from "./infrastructure/logging/create-logger.js";
 import { FallbackParser } from "./infrastructure/parsing/fallback-parser.js";
 import { HybridRetriever } from "./infrastructure/retrieval/hybrid-retriever.js";
 import { GlobFileScanner } from "./infrastructure/scanning/glob-file-scanner.js";
+import { FileCanonicalFactRepository } from "./infrastructure/state/file-canonical-fact-repository.js";
+import { FileDerivedFactRepository } from "./infrastructure/state/file-derived-fact-repository.js";
 import { FileDocumentManifestRepository } from "./infrastructure/state/file-document-manifest-repository.js";
 import { FileIndexStateRepository } from "./infrastructure/state/file-index-state-repository.js";
+import { FileInternalGraphRepository } from "./infrastructure/state/file-internal-graph-repository.js";
+import { FileStructuredObservationRepository } from "./infrastructure/state/file-structured-observation-repository.js";
+import { FileSymbolCandidateRepository } from "./infrastructure/state/file-symbol-candidate-repository.js";
 import { LanceDbVectorStore } from "./infrastructure/storage/lance-db-vector-store.js";
 import {
   IncrementalWatcherRuntime,
@@ -43,6 +60,7 @@ function createEmbeddingPort(options: {
   logger: LoggerPort;
   modelDir: string;
   resolvedModel: LkgConfig["resolvedLlamaCppModel"];
+  threads: number;
 }): EmbeddingPort {
   const embeddingPort = new LlamaCppEmbeddingAdapter(options);
   return embeddingPort;
@@ -110,12 +128,51 @@ export function composeDaemonHandler(options: {
     logger,
     modelDir: config.llamaCppModelDir ?? resolve(config.homeDir, "llm"),
     resolvedModel: config.resolvedLlamaCppModel,
+    threads: config.embeddingThreads,
   });
   const vectorStore: VectorStorePort = new LanceDbVectorStore({
     indexScope: config.indexScope,
     projectIdentity: config.activeProjectIdentity,
     vectorDbUri: config.vectorDbUri,
   });
+  const symbolCandidateStore: SymbolCandidateStorePort =
+    new FileSymbolCandidateRepository({
+      homeDir: config.homeDir,
+      indexScope: config.indexScope,
+      projectIdentity: config.activeProjectIdentity,
+    });
+  const canonicalFactStore = new FileCanonicalFactRepository({
+    homeDir: config.homeDir,
+    indexScope: config.indexScope,
+    projectIdentity: config.activeProjectIdentity,
+  });
+  const derivedFactStore = new FileDerivedFactRepository({
+    homeDir: config.homeDir,
+    indexScope: config.indexScope,
+    projectIdentity: config.activeProjectIdentity,
+  });
+  const internalGraphStore = new FileInternalGraphRepository({
+    homeDir: config.homeDir,
+    indexScope: config.indexScope,
+    projectIdentity: config.activeProjectIdentity,
+  });
+  const structuredObservationStore: StructuredObservationStorePort =
+    new FileStructuredObservationRepository({
+      homeDir: config.homeDir,
+      indexScope: config.indexScope,
+      projectIdentity: config.activeProjectIdentity,
+    });
+  const languageRegistry: LanguageRegistryPort = new DefaultLanguageRegistry();
+  const structuredAnalyzers: StructuredAnalyzerRegistryPort =
+    new DefaultStructuredAnalyzerRegistry(
+      [
+        new RepoArtifactAnalyzer(),
+        new GenericStructuredAnalyzer(),
+        new TsJsDeepAnalyzer(),
+        new AstGrepStructuredAnalyzer(languageRegistry, new AstGrepRuleLoader()),
+      ],
+      languageRegistry,
+    );
   const retriever: RetrieverPort = new HybridRetriever(embedding, vectorStore);
   const ingestionPipeline: IngestionPipelinePort = new DefaultIngestionPipeline(
     new GlobFileScanner({
@@ -133,6 +190,13 @@ export function composeDaemonHandler(options: {
       indexScope: config.indexScope,
       projectIdentity: config.activeProjectIdentity,
     }),
+    symbolCandidateStore,
+    structuredObservationStore,
+    structuredAnalyzers,
+    canonicalFactStore,
+    derivedFactStore,
+    internalGraphStore,
+    new InternalGraphProjector(),
     logger,
     {
       activeProjectIdentity: config.activeProjectIdentity,
@@ -179,12 +243,16 @@ export function composeDaemonHandler(options: {
       : null;
 
   return createDaemonRequestHandler({
+    canonicalFactStore,
+    derivedFactStore,
     embedding,
     indexStatePort: indexStateRepository,
     ingestionPipeline,
+    internalGraphStore,
     logger,
     retriever,
     statusContext,
+    symbolCandidateStore,
     watcherRuntime,
   });
 }

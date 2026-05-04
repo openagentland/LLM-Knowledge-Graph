@@ -1,4 +1,7 @@
-export type SourceType = "code" | "doc";
+import type { SourceType } from "./ingestion.js";
+import type { PersistedSymbolCandidateRecord } from "./structured-records.js";
+
+export type { SourceType } from "./ingestion.js";
 
 export type PersistedChunkRecord = {
   chunkKey: string;
@@ -21,6 +24,8 @@ export type PersistedChunkRecord = {
   };
 };
 
+export type PersistedSymbolCandidate = PersistedSymbolCandidateRecord;
+
 export type FileManifestEntry = {
   chunkKeys: string[];
   fileFingerprint: string;
@@ -28,4 +33,5 @@ export type FileManifestEntry = {
   lastIndexedAt: string;
   path: string;
   sourceType: SourceType;
+  symbolCandidates?: PersistedSymbolCandidateRecord[];
 };

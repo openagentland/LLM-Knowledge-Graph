@@ -21,7 +21,7 @@
 
 **Your AI reads files. LKG builds project intelligence.**
 
-**LLM-Knowledge-Graph (LKG) is a local-first, MCP-first Knowledge Intelligent System for AI agents.** It turns source code, docs, configs, schemas, and project artifacts into structured, queryable knowledge with verifiable evidence.
+**LLM-Knowledge-Graph (LKG) is a local-first, MCP-first Knowledge Intelligent System for AI agents.** It turns source code, docs, configs, schemas, and project artifacts into structured, evidence-bearing knowledge that agent runtimes can retrieve, traverse, verify, and use for grounded reasoning.
 
 LKG is built for questions that plain retrieval often cannot answer reliably:
 
@@ -35,16 +35,15 @@ The core model is dual-direction understanding:
 - **Top-down:** goals → architecture → modules/concepts → files/symbols → implementation
 - **Bottom-up:** symbols/flows/dependencies → behavior → architectural role → intent
 
-LKG is **evidence-first** by design: answers should be traceable to concrete proof (path, symbol, line, section, schema/config, graph provenance), so agents can reason and verify instead of guessing.
+LKG is **evidence-first** by design: results should be traceable to concrete proof (path, symbol, line, section, schema/config, graph provenance), so agents can reason and verify on top of grounded project knowledge instead of guessing.
 
 ## Features
 
-- **MCP-first, capability-oriented tool surface** — Stable long-term contracts centered on capabilities (`lkg.status`, `lkg.index`, `lkg.search`, `lkg.symbol`, `lkg.impact`, `lkg.flow`, `lkg.context`, `lkg.arch`, `lkg.ask`) instead of backend-specific naming.
+- **MCP-first, capability-oriented tool surface** — The current stable public surface is `lkg.status`, `lkg.index`, `lkg.search`, `lkg.symbols`, and `lkg.symbol`, with future capability expansion guided by stable, capability-oriented contracts rather than backend-specific naming.
 - **Unified project knowledge ingestion** — Indexes code, docs, configs, schemas, and artifacts into one connected knowledge system.
-- **Structured facts and derived facts** — Builds machine-usable project facts (definitions, references, calls, imports, tests, config links) and higher-order derived relations for reasoning.
-- **Graph-native understanding** — Connects symbols, files, modules, concepts, and decisions in a unified graph for traversal-based exploration.
-- **Flow and impact intelligence** — Supports call-flow tracing and blast-radius analysis to answer change-risk questions before edits.
-- **Evidence-first retrieval and synthesis** — Prioritizes provenance-rich evidence during search and returns grounded answers with traceable citations.
+- **Structured facts and derived facts** — Builds machine-usable project facts (definitions, references, calls, imports, tests, config links) and higher-order derived relations that improve grounded retrieval and analysis.
+- **Graph-native understanding** — Connects symbols, files, modules, concepts, and decisions in an internal graph for traversal-based exploration and future capability growth.
+- **Evidence-first retrieval substrate** — Prioritizes provenance-rich evidence during search and returns grounded knowledge that agent runtimes can synthesize on top.
 - **Continuous awareness runtime** — Resumable indexing and watcher-driven incremental updates keep project knowledge fresh across restarts.
 - **Local-first by default, provider-flexible by choice** — Runs locally without mandatory cloud dependencies while supporting optional provider integrations.
 
@@ -52,7 +51,7 @@ LKG is **evidence-first** by design: answers should be traceable to concrete pro
 
 Most AI coding workflows can retrieve snippets, but retrieval alone is not enough for maintainership-level understanding. Teams need to verify architectural intent, trace behavior across boundaries, and estimate impact before changing production code.
 
-LKG exists to close that gap: from “find text” to “build operational project intelligence.” It helps agents move from plausible answers to verifiable reasoning backed by evidence.
+LKG exists to close that gap: from “find text” to “build operational project intelligence.” It gives agent runtimes a stronger evidence-bearing substrate for retrieval, traversal, verification, and grounded reasoning.
 
 LKG follows **inspiration without dependency**: it learns mechanisms from strong systems (graph reasoning, schema-aware modeling, code facts, program analysis) while staying independent in architecture, runtime, and host integration.
 
@@ -118,15 +117,15 @@ Or as MCP only (without skills):
 claude mcp add lkg -- npx -y @openagentland/lkg
 ```
 
-**First time on a project** — ask your AI: **"Index this codebase"**. Indexing runs in the background; ask **"What is the codebase index status?"** to monitor progress. Depending on codebase size and whether you're using GPU-accelerated Ollama or cloud embeddings, first-time indexing can take anywhere from a few seconds to a few minutes (it takes under 10 minutes to first-index +3 million lines of code on a Macbook Pro M4). Once complete it doesn't need to be run again, you can search, explore the dependency graph, and query context artifacts.
+**First time on a project** — ask your AI: **"Index this codebase"**. Indexing runs in the background; ask **"What is the codebase index status?"** to monitor progress. Depending on codebase size and whether you're using GPU-accelerated Ollama or cloud embeddings, first-time indexing can take anywhere from a few seconds to a few minutes (it takes under 10 minutes to first-index +3 million lines of code on a Macbook Pro M4). Once complete, you can use the current tool surface to search project knowledge and inspect symbol candidates and symbol details with provenance.
 
-**Every time after that** — just use the tools (search, graph, etc.). On server startup LLM-Knowledge-Graph automatically detects previously indexed projects, restarts the file watcher, and runs an incremental update to catch any changes made while the server was down. If indexing was interrupted, it resumes automatically from the last checkpoint. You can also explicitly start or restart the watcher with `codebase_watch { action: "start" }`.
+**Every time after that** — just use the current tools (`lkg.search`, `lkg.symbols`, `lkg.symbol`, and status/index lifecycle tools as needed). On server startup LLM-Knowledge-Graph automatically detects previously indexed projects, restarts the file watcher, and runs an incremental update to catch any changes made while the server was down. If indexing was interrupted, it resumes automatically from the last checkpoint.
 
 > **Recommended**: For best results, add the [Agent Instructions](#agent-instructions) to your AI assistant's system prompt or project instructions file (`CLAUDE.md`, `AGENTS.md`, etc.). The key principle — **search before reading** — helps your AI use LLM-Knowledge-Graph's tools effectively and avoid unnecessary file reads.
 
 > **Claude Code users**: If you installed the LLM-Knowledge-Graph plugin, the Agent Instructions are included automatically as skills — no need to add them to your `CLAUDE.md`. The plugin also bundles the MCP server, so you don't need a separate `claude mcp add`.
 
-> **Advanced**: You can enhance performance via config. Like using external LLM for embeding or reseaning via ENVIROMENT variables config (Guide comming soon)
+> **Advanced**: You can enhance performance via configuration, such as choosing different embedding providers or tuning runtime settings via environment variables. Guide coming soon.
 
 ## Plugins
 

@@ -11,8 +11,9 @@
    - Dependency rules still apply: `presentation -> application -> domain`, `infrastructure -> application/domain (through ports)`.
 
 3. **MCP-first tool contract**
-   - The tool surface stays stable around capabilities (`lkg.status`, `lkg.index`, `lkg.search`, ...).
+   - The stable v0.2 surface is `lkg.status`, `lkg.index`, `lkg.search`, `lkg.symbols`, and `lkg.symbol`.
    - Do not name tools around specific providers or backends.
+   - Do not document later-phase tools as available before they are implemented and stable.
 
 4. **Evidence-first**
    - Query and reasoning results must always be traceable back to evidence (path, symbol, line, source).
@@ -73,7 +74,8 @@ tests/
 
 ### Domain
 
-- Contains LKG's core business concepts (symbol, relationship, knowledge unit, ...).
+- Contains LKG's core business concepts (symbol, relationship, knowledge unit, provenance, graph semantics, ...).
+- May include value-object-level rules and normalization that define business meaning.
 - Must not contain framework-, protocol-, or database-dependent code.
 
 ### Application

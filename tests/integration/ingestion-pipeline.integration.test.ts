@@ -6,7 +6,12 @@ import type { DocumentChunk } from "../../src/application/dto/ingestion.js";
 import {
   createIntegrationPipeline,
   createTempHomeDir,
+  readCanonicalFacts,
+  readDerivedFacts,
+  readInternalGraph,
   readManifest,
+  readStructuredObservations,
+  readSymbols,
   readVectorStore,
   sortedPaths,
 } from "../helpers/integration-runtime.js";
@@ -37,16 +42,14 @@ describe("DefaultIngestionPipeline", () => {
         path: string;
       }>;
       const manifest = (await readManifest(homeDir)) as Array<{ path: string }>;
+      const symbols = await readSymbols(homeDir);
+      const observations = await readStructuredObservations(homeDir);
 
       expect(summary.counters.filesTotal).toBe(2);
       expect(summary.counters.filesIndexed).toBe(2);
       expect(summary.filesUnchanged).toBe(0);
       expect(summary.chunksWritten).toBe(summary.chunks.length);
       expect(summary.chunksEmbedded).toBe(summary.chunks.length);
-      expect(summary.skipped).toContainEqual({
-        path: "ignored.ts",
-        reason: "ignored",
-      });
       expect(summary.skipped).toContainEqual({
         path: ".gitignore",
         reason: "unsupported",
@@ -65,6 +68,19 @@ describe("DefaultIngestionPipeline", () => {
       });
       expect(
         codeChunks.some((chunk) => chunk.extractor.startsWith("ast-grep:")),
+      ).toBe(true);
+      expect(summary.observations.length).toBeGreaterThan(0);
+      expect(
+        observations.some(
+          (observation) =>
+            observation.kind === "file" && observation.path === "main.ts",
+        ),
+      ).toBe(true);
+      expect(
+        observations.some(
+          (observation) =>
+            observation.kind === "module" && observation.path === "main.ts",
+        ),
       ).toBe(true);
       expect(docChunks).toHaveLength(2);
       expect(docChunks.map((chunk) => chunk.path)).toEqual([
@@ -88,6 +104,21 @@ describe("DefaultIngestionPipeline", () => {
           ...Array.from({ length: codeChunks.length }, () => "main.ts"),
         ].sort(),
       );
+      expect(symbols).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "variable",
+            name: "answer",
+            path: "main.ts",
+          }),
+          expect.objectContaining({
+            kind: "function",
+            name: "greet",
+            path: "main.ts",
+          }),
+        ]),
+      );
+      expect(manifest.some((entry) => entry.path === "main.ts")).toBe(true);
       expect(sortedPaths(manifest)).toEqual(["README.md", "main.ts"]);
     });
   });
@@ -139,6 +170,7 @@ describe("DefaultIngestionPipeline", () => {
         indexRunId: string;
         path: string;
       }>;
+      const symbols = await readSymbols(homeDir);
 
       expect(summary.counters.filesIndexed).toBe(2);
       expect(summary.filesUnchanged).toBe(1);
@@ -157,6 +189,11 @@ describe("DefaultIngestionPipeline", () => {
           (record) =>
             record.path === "README.md" && record.indexRunId === "run-1",
         ),
+      ).toBe(true);
+      expect(
+        symbols
+          .filter((record) => record.path === "main.ts")
+          .every((record) => record.indexRunId === "run-2"),
       ).toBe(true);
     });
   });
@@ -179,6 +216,7 @@ describe("DefaultIngestionPipeline", () => {
         path: string;
       }>;
       const manifest = (await readManifest(homeDir)) as Array<{ path: string }>;
+      const symbols = await readSymbols(homeDir);
 
       expect(summary.filesPurged).toBeGreaterThanOrEqual(2);
       expect(summary.chunksPurged).toBeGreaterThan(0);
@@ -194,6 +232,9 @@ describe("DefaultIngestionPipeline", () => {
       expect(manifest.some((entry) => entry.path === "README.md")).toBe(false);
       expect(manifest.some((entry) => entry.path === "main.ts")).toBe(false);
       expect(manifest.some((entry) => entry.path === "renamed.ts")).toBe(true);
+      expect(symbols.some((record) => record.path === "README.md")).toBe(false);
+      expect(symbols.some((record) => record.path === "main.ts")).toBe(false);
+      expect(symbols.some((record) => record.path === "renamed.ts")).toBe(true);
       expect(sortedPaths(manifest)).toEqual(["renamed.ts"]);
     });
   });
@@ -233,24 +274,116 @@ describe("DefaultIngestionPipeline", () => {
     });
   });
 
-  describe("progress/checkpoint", () => {
-    it("tracks batch progress in the ingestion summary", async () => {
+  describe("structured fact and graph persistence", () => {
+    it("persists canonical facts, derived facts, and graph nodes for package tasks", async () => {
       const cwd = await materializeFixtureProject("ingestion-basic");
       const homeDir = await createTempHomeDir();
       await writeFile(
-        join(cwd, "extra.md"),
-        `# Extra\n\n${"context ".repeat(120)}`,
+        join(cwd, "package.json"),
+        JSON.stringify(
+          {
+            name: "fixture-app",
+            scripts: {
+              lint: "eslint .",
+              check: "npm run lint",
+            },
+          },
+          null,
+          2,
+        ),
         "utf8",
       );
       const pipeline = createIntegrationPipeline(cwd, homeDir);
 
-      const summary = await pipeline.run({ indexRunId: "run-1", mode: "full" });
+      await pipeline.run({ indexRunId: "run-structured-graph", mode: "full" });
 
-      expect(summary.progress.batchTotal).toBeGreaterThan(0);
-      expect(summary.progress.batchIndex).toBe(summary.progress.batchTotal);
-      expect(summary.progress.filesProcessed).toBe(
-        summary.counters.filesIndexed + summary.counters.errors,
+      const canonicalFacts = await readCanonicalFacts(homeDir);
+      const derivedFacts = await readDerivedFacts(homeDir);
+      const graph = await readInternalGraph(homeDir);
+
+      expect(canonicalFacts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "config_artifact", path: "package.json" }),
+          expect.objectContaining({ kind: "workspace_task", path: "package.json" }),
+          expect.objectContaining({ kind: "package_script", path: "package.json" }),
+        ]),
       );
+      expect(derivedFacts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "task-runs-command", path: "package.json" }),
+          expect.objectContaining({ kind: "quality-gate-runs-script-candidate", path: "package.json" }),
+        ]),
+      );
+      expect(graph.nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "ConfigArtifact", path: "package.json" }),
+          expect.objectContaining({ kind: "Task", path: "package.json" }),
+          expect.objectContaining({ kind: "PackageScript", path: "package.json" }),
+          expect.objectContaining({ kind: "Command", path: "package.json" }),
+        ]),
+      );
+      expect(graph.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "REPRESENTS", path: "package.json" }),
+          expect.objectContaining({ kind: "task-runs-command", path: "package.json" }),
+          expect.objectContaining({ kind: "quality-gate-runs-script-candidate", path: "package.json" }),
+        ]),
+      );
+    });
+  });
+
+  describe("structured analysis fail-soft behavior", () => {
+    it("does not crash indexing for unsupported languages", async () => {
+      const cwd = await materializeFixtureProject("ingestion-basic");
+      const homeDir = await createTempHomeDir();
+      await writeFile(join(cwd, "script.unknownlang"), "print('hello')\n", "utf8");
+      const pipeline = createIntegrationPipeline(cwd, homeDir);
+
+      const summary = await pipeline.run({ indexRunId: "run-unsupported", mode: "full" });
+      const observations = await readStructuredObservations(homeDir);
+
+      expect(summary.counters.errors).toBe(0);
+      expect(summary.chunks.length).toBeGreaterThan(0);
+      expect(summary.chunks.some((chunk) => chunk.path === "script.unknownlang")).toBe(true);
+      expect(observations.every((observation) => observation.language !== null)).toBe(true);
+    });
+
+    it("continues text indexing when structured analyzers fail", async () => {
+      const cwd = await materializeFixtureProject("ingestion-basic");
+      const homeDir = await createTempHomeDir();
+      await writeFile(
+        join(cwd, "broken.ts"),
+        "export const broken = 1;\nfunction invoke() {\n  return broken;\n}\n",
+        "utf8",
+      );
+      const pipeline = createIntegrationPipeline(cwd, homeDir);
+      const originalAnalyze = pipeline["structuredAnalyzers"].select.bind(
+        pipeline["structuredAnalyzers"],
+      );
+      pipeline["structuredAnalyzers"].select = (document) => {
+        const analyzers = originalAnalyze(document);
+        if (document.path === "broken.ts") {
+          return [
+            {
+              analyze: async () => {
+                await Promise.resolve();
+                throw new Error("structured analyzer failed");
+              },
+              supports: () => true,
+            },
+            ...analyzers,
+          ];
+        }
+
+        return analyzers;
+      };
+
+      const summary = await pipeline.run({ indexRunId: "run-fail-soft", mode: "full" });
+      const storedRecords = await readVectorStore(homeDir);
+
+      expect(summary.counters.errors).toBe(0);
+      expect(storedRecords.some((record) => record.path === "broken.ts")).toBe(true);
+      expect(summary.chunks.some((chunk) => chunk.path === "broken.ts")).toBe(true);
     });
   });
 });

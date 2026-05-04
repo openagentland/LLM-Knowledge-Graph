@@ -7,6 +7,12 @@ import type {
   SearchKnowledgeCommand,
   SearchKnowledgeResult,
 } from "./search.js";
+import type {
+  GetSymbolCommand,
+  ListSymbolsCommand,
+  ListSymbolsResult,
+  SymbolDetailResult,
+} from "./symbols.js";
 
 export type DaemonRequest =
   | {
@@ -22,6 +28,14 @@ export type DaemonRequest =
   | {
       command: SearchKnowledgeCommand;
       type: "search.query";
+    }
+  | {
+      command: ListSymbolsCommand;
+      type: "symbols.query";
+    }
+  | {
+      command: GetSymbolCommand;
+      type: "symbol.get";
     };
 
 export type DaemonResponse =
@@ -40,4 +54,12 @@ export type DaemonResponse =
   | {
       result: SearchKnowledgeResult;
       type: "search.query";
+    }
+  | {
+      result: ListSymbolsResult;
+      type: "symbols.query";
+    }
+  | {
+      result: SymbolDetailResult;
+      type: "symbol.get";
     };

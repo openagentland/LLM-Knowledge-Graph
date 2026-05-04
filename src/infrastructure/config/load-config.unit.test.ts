@@ -22,10 +22,12 @@ describe("loadConfig", () => {
     expect(config.vectorDbProvider).toBe("lancedb");
     expect(config.vectorDbUri).toContain("/.lkg/vectordb/lance");
     expect(config.embeddingProvider).toBe("llama_cpp");
-    expect(config.llamaCppUri).toBe("preset:nomic-v1.5");
+    expect(config.llamaCppUri).toBe("preset:nomic-v1.5-q8");
     expect(config.logMaxBytes).toBe(20 * 1024 * 1024);
     expect(config.logMaxFiles).toBe(5);
     expect(config.embeddingBatchSize).toBe(16);
+    expect(config.embeddingThreads).toBe(1);
+    expect(config.inferenceThreads).toBe(1);
     expect(config.embeddingTokenMargin).toBe(256);
     expect(config.fileScanBatchSize).toBe(50);
     expect(config.indexCheckpointEveryBatches).toBe(1);
@@ -95,7 +97,7 @@ describe("loadConfig", () => {
         LKG_EMBEDDING_MODEL: "nomic-embed-text-v1.5.f16.gguf",
         LKG_HOME: "/tmp/lkg-home",
         LKG_LLAMA_CPP_MODEL_DIR: "./models",
-        LKG_LLAMA_CPP_URI: "preset:nomic-v1.5",
+        LKG_LLAMA_CPP_URI: "preset:nomic-v1.5-q8",
         LKG_VECTORDB_URI: "./data/vector-store",
       },
       gitBranch: null,
@@ -103,7 +105,7 @@ describe("loadConfig", () => {
 
     expect(config.vectorDbUri).toBe("/tmp/repo/project/data/vector-store");
     expect(config.llamaCppModelDir).toBe("/tmp/repo/project/models");
-    expect(config.llamaCppUri).toBe("preset:nomic-v1.5");
+    expect(config.llamaCppUri).toBe("preset:nomic-v1.5-q8");
     expect(config.embeddingContextLength).toBe(4096);
     expect(config.embeddingModel).toBe("nomic-embed-text-v1.5.f16.gguf");
     expect(config.embeddingDimension).toBe(768);
@@ -154,9 +156,11 @@ describe("loadConfig", () => {
         LKG_CHUNK_TOKEN_OVERLAP: "32",
         LKG_EMBEDDING_BATCH_SIZE: "8",
         LKG_EMBEDDING_CONTEXT_LENGTH: "4096",
+        LKG_EMBEDDING_THREADS: "2",
         LKG_EMBEDDING_TOKEN_MARGIN: "128",
         LKG_FILE_SCAN_BATCH_SIZE: "20",
         LKG_INDEX_CHECKPOINT_EVERY_BATCHES: "2",
+        LKG_INFERENCE_THREADS: "3",
         LKG_MAX_CHUNK_TOKENS: "512",
         LKG_MAX_SPLIT_DEPTH: "3",
         LKG_OVERSIZED_SEGMENT_POLICY: "skip",
@@ -167,6 +171,8 @@ describe("loadConfig", () => {
 
     expect(config.chunkTokenOverlap).toBe(32);
     expect(config.embeddingBatchSize).toBe(8);
+    expect(config.embeddingThreads).toBe(2);
+    expect(config.inferenceThreads).toBe(3);
     expect(config.embeddingTokenMargin).toBe(128);
     expect(config.fileScanBatchSize).toBe(20);
     expect(config.indexCheckpointEveryBatches).toBe(2);
@@ -176,7 +182,7 @@ describe("loadConfig", () => {
     expect(config.vectorUpsertBatchSize).toBe(40);
   });
 
-  it("changes config fingerprint when batching or embedding settings change", () => {
+  it("changes config fingerprint when batching, threading, or embedding settings change", () => {
     const baseConfig = loadConfig({
       cwd: "/repo/project",
       env: {
@@ -187,13 +193,24 @@ describe("loadConfig", () => {
     const updatedConfig = loadConfig({
       cwd: "/repo/project",
       env: {
-        LKG_EMBEDDING_DIM: "768",
+        LKG_EMBEDDING_THREADS: "2",
+        LKG_HOME: "/tmp/lkg-home",
+      },
+      gitBranch: null,
+    });
+    const inferenceUpdatedConfig = loadConfig({
+      cwd: "/repo/project",
+      env: {
+        LKG_INFERENCE_THREADS: "2",
         LKG_HOME: "/tmp/lkg-home",
       },
       gitBranch: null,
     });
 
     expect(updatedConfig.configFingerprint).not.toBe(
+      baseConfig.configFingerprint,
+    );
+    expect(inferenceUpdatedConfig.configFingerprint).not.toBe(
       baseConfig.configFingerprint,
     );
   });
@@ -256,12 +273,26 @@ describe("loadConfig", () => {
     );
   });
 
-  it("rejects invalid embedding integer envs", () => {
+  it("rejects invalid embedding and thread integer envs", () => {
     expect(() =>
       loadConfig({
         cwd: "/repo/project",
         env: {
-          LKG_EMBEDDING_CONTEXT_LENGTH: "0",
+          LKG_EMBEDDING_THREADS: "0",
+        },
+        gitBranch: null,
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: ERROR_CODES.INVALID_INPUT,
+      }),
+    );
+
+    expect(() =>
+      loadConfig({
+        cwd: "/repo/project",
+        env: {
+          LKG_INFERENCE_THREADS: "abc",
         },
         gitBranch: null,
       }),

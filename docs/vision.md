@@ -2,7 +2,7 @@
 
 ## 1) Core destination
 
-LKG is a **local-first, MCP-first** system that helps AI agents deeply understand software projects, from code to documentation. LKG positions itself as a **Knowledge Intelligent System for AI Agents**: transforming project data into structured knowledge that can be queried, reasoned over, and verified with evidence.
+LKG is a **local-first, MCP-first** system that helps AI agents deeply understand software projects, from code to documentation. LKG positions itself as a **Knowledge Intelligent System for AI Agents**: transforming project data into structured, evidence-bearing knowledge that can be retrieved, traversed, verified, and used by agent runtimes for grounded reasoning.
 
 The goal is not just to “find code,” but to help agents answer key questions accurately:
 
@@ -51,7 +51,7 @@ Providers and backends must come after ports/interfaces.
 
 The watcher is default runtime behavior (can be disabled with `LKG_DISABLE_WATCHER=true`), and watcher failures must not crash the server.
 
-### 3.5 Evidence-first reasoning
+### 3.5 Evidence-first knowledge
 
 Every result must be traceable back to evidence (path, line, symbol, section, schema/config, graph provenance).
 
@@ -72,7 +72,7 @@ source code / docs / configs / schemas / artifacts
 → unified graph
 → derived facts
 → summaries
-→ reasoning
+→ retrieval / traversal / evidence-bearing knowledge artifacts
 ```
 
 In short:
@@ -82,7 +82,7 @@ In short:
 - **Unified graph:** connects code, docs, concepts, modules, decisions, configs, and tests.
 - **Derived facts:** caller/callee, impact paths, concept realization, test relations, and more.
 - **Summaries:** module/concept/architecture/community/knowledge-unit summaries.
-- **Reasoning:** a solver that performs multi-step queries with citations and uncertainty.
+- **Retrieval and traversal surfaces:** evidence-first access paths that agent runtimes can use for grounded reasoning, synthesis, and verification.
 
 ## 5) Key capability layers
 
@@ -102,10 +102,10 @@ In short:
 - AST, CFG, data-flow, PDG, and CPG are first-class concepts.
 - Includes slicing and reusable analysis rules to support flow, impact, and security reasoning.
 
-### 5.4 Builder/Solver split (KAG-inspired)
+### 5.4 Builder and downstream reasoning consumers (KAG-inspired)
 
 - **Builder (`lkg.index`)**: builds facts/elements/graph/derived facts/summaries.
-- **Solver**: plan → retrieve → traverse → verify → synthesize.
+- **Reasoning consumers**: agent runtimes or optional higher-level gateways can plan → retrieve → traverse → verify → synthesize on top of LKG's evidence-bearing knowledge surfaces.
 
 ## 6) Long-term MCP tool surface
 
@@ -119,13 +119,13 @@ In short:
 - **`lkg.flow`**: traces execution/data/control flow to answer “how does the system run?”, with drill-down from macro flow to line-level evidence.
 - **`lkg.context`**: retrieves normalized knowledge units (docs/specs/ADRs/schemas/configs/artifacts) and links them to the implementation.
 - **`lkg.arch`**: synthesizes the architectural view (module boundaries, responsibilities, coupling, consistency/drift signals, decision alignment).
-- **`lkg.ask`**: a multi-step reasoning Q&A gateway; orchestrates retrieve → traverse → verify → synthesize and returns answers with citations and uncertainty.
+- **`lkg.ask`**: an optional multi-step reasoning Q&A gateway; it can orchestrate retrieve → traverse → verify → synthesize for hosts that want a built-in convenience layer on top of the core knowledge substrate.
 
 Principles:
 
 - Compact, stable, capability-oriented.
 - Not named after specific engines/providers.
-- `lkg.search` prioritizes evidence; `lkg.ask` synthesizes with citations.
+- `lkg.search` prioritizes evidence; `lkg.ask`, if provided, synthesizes on top of that evidence.
 
 ## 7) Product identity and configuration
 
@@ -157,6 +157,8 @@ Possible extended providers include: Ollama, Voyage, OpenAI, Google, Anthropic, 
 - Raw/derived fact boundaries
 - Symbol extraction/search/inspection
 - Graph foundation
+- Stable public MCP surface: `lkg.status`, `lkg.index`, `lkg.search`, `lkg.symbols`, `lkg.symbol`
+- Internal graph remains implementation-owned; deeper graph traversal and reasoning stay deferred to v0.3+
 
 ### v0.3.x — deep flow/impact reasoning
 
@@ -178,10 +180,10 @@ Possible extended providers include: Ollama, Voyage, OpenAI, Google, Anthropic, 
 
 ### v0.6.x+ — grounded project Q&A
 
-- `lkg.ask`
-- Multi-step solver reasoning
+- Optional `lkg.ask` convenience gateway
+- Multi-step reasoning orchestration for hosts that want a built-in Q&A layer
 - Citation + uncertainty
-- Production-grade combination of top-down and bottom-up understanding
+- Production-grade combination of top-down and bottom-up understanding over the core knowledge substrate
 
 ## 9) What LKG should not become
 
@@ -196,5 +198,5 @@ LKG becomes the project knowledge layer that enables AI agents to:
 - find the right relevant code and documentation,
 - deeply understand symbols, flows, dependencies, and impact,
 - connect implementation to architecture and intent,
-- answer with evidence, clear citations, and explicit uncertainty,
+- reason and answer with evidence, clear citations, and explicit uncertainty,
 - operate like a maintainer with both macro and micro understanding.

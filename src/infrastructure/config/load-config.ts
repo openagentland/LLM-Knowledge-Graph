@@ -23,11 +23,13 @@ export type LkgConfig = {
   embeddingDimension: number | null;
   embeddingModel: string | null;
   embeddingProvider: "llama_cpp";
+  embeddingThreads: number;
   embeddingTokenMargin: number;
   fileScanBatchSize: number;
   homeDir: string;
   indexCheckpointEveryBatches: number;
   indexScope: IndexScope;
+  inferenceThreads: number;
   llamaCppModelDir: string | null;
   llamaCppUri: string;
   logFile: string;
@@ -52,6 +54,8 @@ const DEFAULT_LOG_MAX_SIZE_MB = 20;
 const DEFAULT_LOG_MAX_FILES = 5;
 const DEFAULT_FILE_SCAN_BATCH_SIZE = 50;
 const DEFAULT_EMBEDDING_BATCH_SIZE = 16;
+const DEFAULT_EMBEDDING_THREADS = 1;
+const DEFAULT_INFERENCE_THREADS = 1;
 const DEFAULT_VECTOR_UPSERT_BATCH_SIZE = 100;
 const DEFAULT_INDEX_CHECKPOINT_EVERY_BATCHES = 1;
 const DEFAULT_EMBEDDING_TOKEN_MARGIN = 256;
@@ -62,7 +66,7 @@ const LOG_MODES = new Set(["file", "std"]);
 const OVERSIZED_SEGMENT_POLICIES = new Set(["split", "skip"]);
 const SUPPORTED_VECTORDB_PROVIDER = "lancedb";
 const SUPPORTED_EMBEDDING_PROVIDER = "llama_cpp";
-const DEFAULT_LLAMA_CPP_URI = "preset:nomic-v1.5";
+const DEFAULT_LLAMA_CPP_URI = "preset:nomic-v1.5-q8";
 
 export function loadConfig(
   options: {
@@ -141,6 +145,16 @@ export function loadConfig(
     "LKG_EMBEDDING_BATCH_SIZE",
     DEFAULT_EMBEDDING_BATCH_SIZE,
   );
+  const embeddingThreads = resolvePositiveInteger(
+    env.LKG_EMBEDDING_THREADS,
+    "LKG_EMBEDDING_THREADS",
+    DEFAULT_EMBEDDING_THREADS,
+  );
+  const inferenceThreads = resolvePositiveInteger(
+    env.LKG_INFERENCE_THREADS,
+    "LKG_INFERENCE_THREADS",
+    DEFAULT_INFERENCE_THREADS,
+  );
   const vectorUpsertBatchSize = resolvePositiveInteger(
     env.LKG_VECTOR_UPSERT_BATCH_SIZE,
     "LKG_VECTOR_UPSERT_BATCH_SIZE",
@@ -193,10 +207,12 @@ export function loadConfig(
         embeddingDimension,
         embeddingModel,
         embeddingProvider,
+        embeddingThreads,
         embeddingTokenMargin,
         fileScanBatchSize,
         indexCheckpointEveryBatches,
         indexScope,
+        inferenceThreads,
         chunkTokenOverlap,
         llamaCppModelDir,
         llamaCppUri,
@@ -227,11 +243,13 @@ export function loadConfig(
     embeddingDimension,
     embeddingModel,
     embeddingProvider,
+    embeddingThreads,
     embeddingTokenMargin,
     fileScanBatchSize,
     homeDir,
     indexCheckpointEveryBatches,
     indexScope,
+    inferenceThreads,
     llamaCppModelDir,
     llamaCppUri,
     logFile,

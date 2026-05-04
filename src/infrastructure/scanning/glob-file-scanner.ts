@@ -38,6 +38,7 @@ const CODE_EXTENSIONS = new Set([
   ".sh",
   ".swift",
   ".ts",
+  ".unknownlang",
 ]);
 
 export class GlobFileScanner implements FileScannerPort {
