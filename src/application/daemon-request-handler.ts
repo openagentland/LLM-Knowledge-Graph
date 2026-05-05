@@ -9,11 +9,15 @@ import type { InternalGraphStorePort } from "./ports/internal-graph-store-port.j
 import type { LoggerPort } from "./ports/logger-port.js";
 import type { RetrieverPort } from "./ports/retriever-port.js";
 import type { SymbolCandidateStorePort } from "./ports/symbol-candidate-store-port.js";
+import { AnalyzeImpactUseCase } from "./use-cases/analyze-impact-use-case.js";
+import { ComputeSliceUseCase } from "./use-cases/compute-slice-use-case.js";
+import { DetectEntrypointsUseCase } from "./use-cases/detect-entrypoints-use-case.js";
 import { GetStatusUseCase } from "./use-cases/get-status-use-case.js";
 import { GetSymbolUseCase } from "./use-cases/get-symbol-use-case.js";
 import { ListSymbolsUseCase } from "./use-cases/list-symbols-use-case.js";
 import { RunIndexUseCase } from "./use-cases/run-index-use-case.js";
 import { SearchKnowledgeUseCase } from "./use-cases/search-knowledge-use-case.js";
+import { TraceFlowUseCase } from "./use-cases/trace-flow-use-case.js";
 import { ERROR_CODES, LkgError } from "../shared/errors/lkg-error.js";
 
 export type DaemonRequestHandler = {
@@ -131,6 +135,76 @@ export function createDaemonRequestHandler(dependencies: {
           return {
             result,
             type: "symbol.get",
+          };
+        }
+        case "entrypoints.list": {
+          const result = await new DetectEntrypointsUseCase(
+            dependencies.indexStatePort,
+            dependencies.canonicalFactStore,
+            dependencies.derivedFactStore,
+            dependencies.symbolCandidateStore,
+            {
+              activeProjectIdentity:
+                dependencies.statusContext.activeProjectIdentity,
+              indexScope: dependencies.statusContext.indexScope,
+            },
+          ).execute(request.command);
+
+          return {
+            result,
+            type: "entrypoints.list",
+          };
+        }
+        case "flow.trace": {
+          const result = await new TraceFlowUseCase(
+            dependencies.indexStatePort,
+            dependencies.derivedFactStore,
+            dependencies.internalGraphStore,
+            dependencies.symbolCandidateStore,
+            {
+              activeProjectIdentity:
+                dependencies.statusContext.activeProjectIdentity,
+              indexScope: dependencies.statusContext.indexScope,
+            },
+          ).execute(request.command);
+
+          return {
+            result,
+            type: "flow.trace",
+          };
+        }
+        case "impact.analyze": {
+          const result = await new AnalyzeImpactUseCase(
+            dependencies.indexStatePort,
+            dependencies.derivedFactStore,
+            dependencies.symbolCandidateStore,
+            {
+              activeProjectIdentity:
+                dependencies.statusContext.activeProjectIdentity,
+              indexScope: dependencies.statusContext.indexScope,
+            },
+          ).execute(request.command);
+
+          return {
+            result,
+            type: "impact.analyze",
+          };
+        }
+        case "slice.compute": {
+          const result = await new ComputeSliceUseCase(
+            dependencies.indexStatePort,
+            dependencies.derivedFactStore,
+            dependencies.symbolCandidateStore,
+            {
+              activeProjectIdentity:
+                dependencies.statusContext.activeProjectIdentity,
+              indexScope: dependencies.statusContext.indexScope,
+            },
+          ).execute(request.command);
+
+          return {
+            result,
+            type: "slice.compute",
           };
         }
         default:

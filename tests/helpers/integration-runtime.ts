@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 
 import { DeterministicEmbedding } from "./deterministic-embedding.js";
 import type { StatusSnapshot } from "../../src/application/dto/index-lifecycle.js";
+import type { OverlaySnapshot } from "../../src/application/dto/overlay.js";
 import type {
   FileManifestEntry,
   PersistedChunkRecord,
@@ -22,6 +23,7 @@ import { AstGrepStructuredAnalyzer } from "../../src/infrastructure/indexing/ast
 import { DefaultIngestionPipeline } from "../../src/infrastructure/indexing/default-ingestion-pipeline.js";
 import { DefaultLanguageRegistry } from "../../src/infrastructure/indexing/default-language-registry.js";
 import { DefaultStructuredAnalyzerRegistry } from "../../src/infrastructure/indexing/default-structured-analyzer-registry.js";
+import { DerivedFactOverlayBuilder } from "../../src/infrastructure/indexing/derived-fact-overlay-builder.js";
 import { GenericStructuredAnalyzer } from "../../src/infrastructure/indexing/generic-structured-analyzer.js";
 import { InternalGraphProjector } from "../../src/infrastructure/indexing/internal-graph-projector.js";
 import { RepoArtifactAnalyzer } from "../../src/infrastructure/indexing/repo-artifact-analyzer.js";
@@ -33,6 +35,7 @@ import { FileDerivedFactRepository } from "../../src/infrastructure/state/file-d
 import { FileDocumentManifestRepository } from "../../src/infrastructure/state/file-document-manifest-repository.js";
 import { FileIndexStateRepository } from "../../src/infrastructure/state/file-index-state-repository.js";
 import { FileInternalGraphRepository } from "../../src/infrastructure/state/file-internal-graph-repository.js";
+import { FileOverlayRepository } from "../../src/infrastructure/state/file-overlay-repository.js";
 import { FileStructuredObservationRepository } from "../../src/infrastructure/state/file-structured-observation-repository.js";
 import { FileSymbolCandidateRepository } from "../../src/infrastructure/state/file-symbol-candidate-repository.js";
 import { LanceDbVectorStore } from "../../src/infrastructure/storage/lance-db-vector-store.js";
@@ -127,6 +130,12 @@ export function createIntegrationPipeline(
       indexScope: TEST_INDEX_SCOPE,
       projectIdentity: TEST_PROJECT_IDENTITY,
     }),
+    new FileOverlayRepository({
+      homeDir,
+      indexScope: TEST_INDEX_SCOPE,
+      projectIdentity: TEST_PROJECT_IDENTITY,
+    }),
+    new DerivedFactOverlayBuilder(),
     new InternalGraphProjector(),
     createTestLogger(),
     {
@@ -272,6 +281,19 @@ export async function readInternalGraph(
     "utf8",
   );
   return JSON.parse(content) as PersistedInternalGraphRecord;
+}
+
+export async function readOverlays(homeDir: string): Promise<OverlaySnapshot> {
+  const content = await readFile(
+    resolve(
+      homeDir,
+      "overlays",
+      TEST_PROJECT_IDENTITY,
+      `${TEST_INDEX_SCOPE}.json`,
+    ),
+    "utf8",
+  );
+  return JSON.parse(content) as OverlaySnapshot;
 }
 
 export async function readStructuredObservations(

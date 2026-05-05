@@ -143,42 +143,42 @@ Default local stack direction:
 
 Possible extended providers include: Ollama, Voyage, OpenAI, Google, Anthropic, Qdrant, Neo4j.
 
-## 8) Concise roadmap by phase
+## 8) Concise roadmap by milestone
 
-### v0.1.x — usable local semantic slice
+### Milestone 1 — usable local semantic slice
 
 - Stable MCP server
 - `lkg.status`, `lkg.index`, `lkg.search`
 - Local semantic indexing/search, idempotent, respecting ignore rules
 
-### v0.2.x — structured code facts + symbol/graph foundation
+### Milestone 2 — structured code facts + symbol/graph foundation
 
 - Structured fact model
 - Raw/derived fact boundaries
 - Symbol extraction/search/inspection
 - Graph foundation
 - Stable public MCP surface: `lkg.status`, `lkg.index`, `lkg.search`, `lkg.symbols`, `lkg.symbol`
-- Internal graph remains implementation-owned; deeper graph traversal and reasoning stay deferred to v0.3+
+- Internal graph remains implementation-owned; deeper graph traversal and reasoning stay deferred to Milestone 3 and beyond
 
-### v0.3.x — deep flow/impact reasoning
+### Milestone 3 — deep flow/impact reasoning
 
 - Entrypoint detection
 - Flow tracing, impact analysis
 - Initial program-analysis overlays (CFG/data-flow/PDG) and slicing
 
-### v0.4.x — context/document intelligence
+### Milestone 4 — context/document intelligence
 
 - File-type-aware ingestion
 - Document partitioning + metadata preservation
 - Context artifact indexing/search
 
-### v0.5.x — macro architecture intelligence
+### Milestone 5 — macro architecture intelligence
 
 - Concept/entity/relationship alignment
 - Community & module summaries
 - Architecture analysis + consistency/risk signals
 
-### v0.6.x+ — grounded project Q&A
+### Milestone 6 — grounded project Q&A
 
 - Optional `lkg.ask` convenience gateway
 - Multi-step reasoning orchestration for hosts that want a built-in Q&A layer

@@ -17,6 +17,9 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 
 import type {
+  CodeLocation,
+  DocLocation,
+  DocumentPartition,
   ParsedDocument,
   ScanCandidate,
   StructuralCodeBlock,
@@ -24,6 +27,8 @@ import type {
 import type { ParserPort } from "../../application/ports/parser-port.js";
 
 const dynamicLanguagesRegistered = registerLanguages();
+const DEFAULT_PARTITION_MAX_CHARS = 8_000;
+const LOCKFILE_PARTITION_MAX_CHARS = 2_000;
 
 const STATIC_LANG_BY_EXTENSION: Record<string, Lang> = {
   js: Lang.JavaScript,
@@ -50,30 +55,176 @@ const DECLARATION_KINDS = new Set([
 export class FallbackParser implements ParserPort {
   async parse(candidate: ScanCandidate): Promise<ParsedDocument> {
     const content = await readFile(candidate.absolutePath, "utf8");
-    const language = resolveLanguage(candidate.path);
+    const partitions = createPartitions(candidate, content);
+    const settledDocuments = await Promise.all(
+      partitions.map(async (partition) => {
+        try {
+          const document = await this.parsePartition(candidate, partition);
+          return { document, partition, status: "fulfilled" as const };
+        } catch {
+          return { partition, status: "rejected" as const };
+        }
+      }),
+    );
+    const successfulDocuments = settledDocuments
+      .filter(
+        (
+          result,
+        ): result is Extract<PartitionParseResult, { status: "fulfilled" }> =>
+          result.status === "fulfilled",
+      )
+      .map((result) => result.document);
+
+    if (successfulDocuments.length === 0) {
+      const degradedDocument = createDegradedDocument(
+        candidate,
+        content,
+        partitions,
+      );
+      if (degradedDocument) {
+        return degradedDocument;
+      }
+
+      throw new Error(`Failed to parse all partitions for ${candidate.path}.`);
+    }
+
+    const reconciledPartitions = reconcilePartitions(
+      partitions,
+      settledDocuments,
+    );
+    const structuralBlocks = successfulDocuments.flatMap(
+      (document) => document.structuralBlocks ?? [],
+    );
+
+    const packageNameDocument = successfulDocuments.find(
+      (document) => document.packageName !== undefined,
+    );
 
     return {
+      artifactKind: candidate.artifactKind,
+      content,
+      imports: successfulDocuments.flatMap(
+        (document) => document.imports ?? [],
+      ),
+      language:
+        successfulDocuments.find((document) => document.language !== null)
+          ?.language ?? null,
+      packageDependencies: successfulDocuments.flatMap(
+        (document) => document.packageDependencies ?? [],
+      ),
+      packageName: packageNameDocument?.packageName,
+      packageScripts: successfulDocuments.flatMap(
+        (document) => document.packageScripts ?? [],
+      ),
+      partitions: reconciledPartitions,
+      path: candidate.path,
+      qualityGates: successfulDocuments.flatMap(
+        (document) => document.qualityGates ?? [],
+      ),
+      sourceType: candidate.sourceType,
+      structuralBlocks:
+        structuralBlocks.length > 0 ? structuralBlocks : undefined,
+      workflowSteps: successfulDocuments.flatMap(
+        (document) => document.workflowSteps ?? [],
+      ),
+    };
+  }
+
+  parsePartition(
+    candidate: ScanCandidate,
+    partition: DocumentPartition,
+  ): Promise<ParsedDocument> {
+    const content = partition.content;
+    const language = resolveLanguage(candidate.path);
+
+    return Promise.resolve({
+      artifactKind: candidate.artifactKind,
       content,
       imports: inferImports(candidate.path, content),
       language,
       packageDependencies: inferPackageDependencies(candidate.path, content),
       packageName: inferPackageName(candidate.path, content),
       packageScripts: inferPackageScripts(candidate.path, content),
+      partitions: [partition],
       path: candidate.path,
       qualityGates: inferQualityGates(candidate.path, content),
       sourceType: candidate.sourceType,
       structuralBlocks:
         candidate.sourceType === "code"
-          ? parseStructuralBlocks(language, content)
+          ? parseStructuralBlocks(language, content, partition.location)
           : undefined,
       workflowSteps: inferWorkflowSteps(candidate.path, content),
-    };
+    });
   }
+}
+
+type PartitionParseResult =
+  | {
+      document: ParsedDocument;
+      partition: DocumentPartition;
+      status: "fulfilled";
+    }
+  | {
+      partition: DocumentPartition;
+      status: "rejected";
+    };
+
+function reconcilePartitions(
+  partitions: DocumentPartition[],
+  results: PartitionParseResult[],
+): DocumentPartition[] {
+  const byId = new Map(
+    results.map((result) => [
+      result.partition.partitionId,
+      result.status === "fulfilled"
+        ? (result.document.partitions?.[0]?.status ?? result.partition.status)
+        : "failed",
+    ]),
+  );
+
+  return partitions.map((partition) => ({
+    ...partition,
+    status: byId.get(partition.partitionId) ?? partition.status,
+  }));
+}
+
+function createDegradedDocument(
+  candidate: ScanCandidate,
+  content: string,
+  partitions: DocumentPartition[],
+): ParsedDocument | null {
+  if (!shouldCreateDegradedDocument(candidate)) {
+    return null;
+  }
+
+  return {
+    artifactKind: candidate.artifactKind,
+    content,
+    imports: inferImports(candidate.path, content),
+    language: resolveLanguage(candidate.path),
+    packageDependencies: inferPackageDependencies(candidate.path, content),
+    packageName: inferPackageName(candidate.path, content),
+    packageScripts: inferPackageScripts(candidate.path, content),
+    partitions: partitions.map((partition) => ({
+      ...partition,
+      status: "degraded",
+    })),
+    path: candidate.path,
+    qualityGates: inferQualityGates(candidate.path, content),
+    sourceType: candidate.sourceType,
+    structuralBlocks: undefined,
+    workflowSteps: inferWorkflowSteps(candidate.path, content),
+  };
+}
+
+function shouldCreateDegradedDocument(candidate: ScanCandidate): boolean {
+  return candidate.artifactKind !== "lockfile";
 }
 
 function parseStructuralBlocks(
   language: string | null,
   content: string,
+  partitionLocation?: CodeLocation | DocLocation,
 ): StructuralCodeBlock[] | undefined {
   if (language === null) {
     return undefined;
@@ -82,13 +233,14 @@ function parseStructuralBlocks(
   try {
     const astLanguage = STATIC_LANG_BY_EXTENSION[language] ?? language;
     const root = parse(astLanguage, content).root();
+    const lineOffset = readCodeLocationStartLine(partitionLocation);
     const blocks = collectDeclarationBlocks(root)
       .map((node) => ({
         content: node.text().trim(),
         kind: String(node.kind()),
         location: {
-          endLine: node.range().end.line + 1,
-          startLine: node.range().start.line + 1,
+          endLine: node.range().end.line + 1 + lineOffset,
+          startLine: node.range().start.line + 1 + lineOffset,
         },
       }))
       .filter((block) => block.content.length > 0);
@@ -101,6 +253,16 @@ function parseStructuralBlocks(
   }
 
   return undefined;
+}
+
+function readCodeLocationStartLine(
+  location: CodeLocation | DocLocation | undefined,
+): number {
+  if (!location || !("startLine" in location)) {
+    return 0;
+  }
+
+  return Math.max(0, location.startLine - 1);
 }
 
 function collectDeclarationBlocks(root: SgNode): SgNode[] {
@@ -169,7 +331,9 @@ function inferImports(path: string, content: string) {
   }
 
   const matches = Array.from(
-    content.matchAll(/(?:import|export)\s+(?:[^"']+?\s+from\s+)?["']([^"']+)["']/gu),
+    content.matchAll(
+      /(?:import|export)\s+(?:[^"']+?\s+from\s+)?["']([^"']+)["']/gu,
+    ),
   );
   return matches.map((match) => ({
     isPackage: !match[1].startsWith("."),
@@ -233,7 +397,8 @@ function inferWorkflowSteps(path: string, content: string) {
   }
 
   const lines = content.split("\n");
-  const steps: Array<{ command?: string; name: string; scriptName?: string }> = [];
+  const steps: Array<{ command?: string; name: string; scriptName?: string }> =
+    [];
   let currentName: string | undefined;
 
   for (const line of lines) {
@@ -283,4 +448,136 @@ function inferQualityGates(path: string, content: string) {
   }
 
   return [];
+}
+
+function createPartitions(
+  candidate: ScanCandidate,
+  content: string,
+): DocumentPartition[] {
+  const normalized = content.replace(/\r\n/g, "\n");
+  const maxChars =
+    candidate.artifactKind === "lockfile"
+      ? LOCKFILE_PARTITION_MAX_CHARS
+      : DEFAULT_PARTITION_MAX_CHARS;
+
+  if (normalized.length <= maxChars) {
+    return [
+      {
+        content: normalized,
+        index: 0,
+        location:
+          candidate.sourceType === "code"
+            ? { endLine: countLines(normalized), startLine: 1 }
+            : { offset: 0 },
+        partitionId: `${candidate.path}:0`,
+        status: "complete",
+        total: 1,
+      },
+    ];
+  }
+
+  const segments =
+    candidate.sourceType === "code"
+      ? splitCodePartitions(normalized, maxChars)
+      : splitDocPartitions(normalized, maxChars);
+
+  return segments.map((segment, index) => ({
+    content: segment.content,
+    index,
+    location: segment.location,
+    partitionId: `${candidate.path}:${index}`,
+    status: index === 0 ? "partial" : "complete",
+    total: segments.length,
+  }));
+}
+
+function splitCodePartitions(
+  content: string,
+  maxChars: number,
+): Array<{ content: string; location: CodeLocation }> {
+  const lines = content.split("\n");
+  const parts: Array<{ content: string; location: CodeLocation }> = [];
+  let startIndex = 0;
+
+  while (startIndex < lines.length) {
+    let endIndex = startIndex;
+    let currentLength = 0;
+
+    while (endIndex < lines.length) {
+      const nextLength = currentLength + lines[endIndex].length + 1;
+      if (currentLength > 0 && nextLength > maxChars) {
+        break;
+      }
+      currentLength = nextLength;
+      endIndex += 1;
+    }
+
+    if (endIndex === startIndex) {
+      endIndex = startIndex + 1;
+    }
+
+    parts.push({
+      content: lines.slice(startIndex, endIndex).join("\n").trim(),
+      location: {
+        endLine: endIndex,
+        startLine: startIndex + 1,
+      },
+    });
+
+    startIndex = endIndex;
+  }
+
+  return parts.filter((part) => part.content.length > 0);
+}
+
+function splitDocPartitions(
+  content: string,
+  maxChars: number,
+): Array<{ content: string; location: DocLocation }> {
+  const sections = content
+    .split(/\n(?=# )/g)
+    .map((section) => section.trim())
+    .filter(Boolean);
+  const source = sections.length > 0 ? sections : [content.trim()];
+  const parts: Array<{ content: string; location: DocLocation }> = [];
+
+  for (const [index, section] of source.entries()) {
+    if (section.length <= maxChars) {
+      parts.push({
+        content: section,
+        location: { offset: index, section: readSectionTitle(section) },
+      });
+      continue;
+    }
+
+    let offset = 0;
+    while (offset < section.length) {
+      const slice = section.slice(offset, offset + maxChars).trim();
+      if (slice) {
+        parts.push({
+          content: slice,
+          location: {
+            offset: parts.length,
+            section: readSectionTitle(section),
+          },
+        });
+      }
+      offset += maxChars;
+    }
+  }
+
+  return parts;
+}
+
+function countLines(content: string): number {
+  if (!content) {
+    return 0;
+  }
+
+  return content.split("\n").length;
+}
+
+function readSectionTitle(content: string): string | undefined {
+  const heading = content.match(/^#\s+(.+)$/m);
+  return heading?.[1]?.trim();
 }

@@ -11,7 +11,7 @@
    - Dependency rules still apply: `presentation -> application -> domain`, `infrastructure -> application/domain (through ports)`.
 
 3. **MCP-first tool contract**
-   - The stable v0.2 surface is `lkg.status`, `lkg.index`, `lkg.search`, `lkg.symbols`, and `lkg.symbol`.
+   - The stable public surface is `lkg.status`, `lkg.index`, `lkg.search`, `lkg.symbols`, `lkg.symbol`, `lkg.entrypoints`, `lkg.flow`, `lkg.impact`, and `lkg.slice`.
    - Do not name tools around specific providers or backends.
    - Do not document later-phase tools as available before they are implemented and stable.
 

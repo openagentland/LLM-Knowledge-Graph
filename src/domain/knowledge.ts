@@ -7,6 +7,105 @@ export type CodeLocation = {
 
 export type StructuredDataScope = "file";
 
+export type AnchorKind =
+  | "symbol"
+  | "file"
+  | "module"
+  | "package"
+  | "entrypoint"
+  | "workflow"
+  | "task"
+  | "quality_gate"
+  | "config_artifact";
+
+export type PrecisionTier =
+  | "resolved"
+  | "derived"
+  | "heuristic"
+  | "possible"
+  | "unknown";
+
+export type AnalysisCompleteness =
+  | "complete"
+  | "partial"
+  | "truncated"
+  | "ambiguous";
+
+export type AnalysisFailureClass =
+  | "INSUFFICIENT_INDEX"
+  | "UNSUPPORTED_CONSTRUCT"
+  | "AMBIGUOUS_RESOLUTION"
+  | "BUDGET_EXHAUSTED"
+  | "STALE_SNAPSHOT"
+  | "RULE_PREREQUISITE_MISSING";
+
+export type AnalysisBudget = {
+  maxDepth?: number;
+  maxEvidence?: number;
+  maxNodes?: number;
+  timeBudgetMs?: number;
+};
+
+export type AnalysisProvenance = {
+  contentHash: string;
+  evidenceId: string;
+  extractor: string;
+  indexRunId: string;
+  path: string;
+};
+
+export type EvidenceItem = {
+  codeLocation?: CodeLocation;
+  docLocation?: {
+    offset?: number;
+    section?: string;
+  };
+  path: string;
+  precisionTier: PrecisionTier;
+  provenance: AnalysisProvenance;
+  snippet?: string;
+  sourceType: SourceType;
+};
+
+export type Anchor = {
+  codeLocation?: CodeLocation;
+  id?: string;
+  kind: AnchorKind;
+  name: string;
+  path?: string;
+  sourceType?: SourceType;
+};
+
+export type FlowSegment = {
+  confidence: number;
+  evidence: EvidenceItem[];
+  from: Anchor;
+  precisionTier: PrecisionTier;
+  relationKind: string;
+  to: Anchor;
+};
+
+export type PropagationPath = {
+  confidence: number;
+  end: Anchor;
+  precisionTier: PrecisionTier;
+  segments: FlowSegment[];
+  start: Anchor;
+};
+
+export type ImpactReason = {
+  detail: string;
+  evidence: EvidenceItem[];
+  precisionTier: PrecisionTier;
+  relationKind: string;
+};
+
+export type LimitationItem = {
+  detail: string;
+  failureClass?: AnalysisFailureClass;
+  kind: string;
+};
+
 export type StructuredObservationKind =
   | "file"
   | "module"
@@ -34,7 +133,8 @@ export type CanonicalFactKind =
   | "workflow"
   | "workflow_job"
   | "workflow_step"
-  | "quality_gate";
+  | "quality_gate"
+  | "entrypoint_candidate";
 
 export type DerivedFactKind =
   | "symbol-defined-in-file"
@@ -49,7 +149,9 @@ export type DerivedFactKind =
   | "job-runs-step"
   | "quality-gate-runs-command"
   | "quality-gate-runs-script-candidate"
-  | "task-runs-command";
+  | "task-runs-command"
+  | "file-declares-entrypoint-candidate"
+  | "config-selects-entrypoint-candidate";
 
 export type StructuredDataProvenance = {
   codeLocation?: CodeLocation;
@@ -190,14 +292,36 @@ function inferTsJsSymbolIdentity(
   fallbackKind: string,
 ): SymbolIdentity | null {
   const patterns: Array<{ kind: string; regex: RegExp }> = [
-    { kind: "class", regex: /(?:export\s+default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)/ },
-    { kind: "interface", regex: /(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/ },
+    {
+      kind: "class",
+      regex:
+        /(?:export\s+default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)/,
+    },
+    {
+      kind: "interface",
+      regex: /(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/,
+    },
     { kind: "enum", regex: /(?:export\s+)?enum\s+([A-Za-z_$][\w$]*)/ },
     { kind: "type", regex: /(?:export\s+)?type\s+([A-Za-z_$][\w$]*)/ },
-    { kind: "function", regex: /(?:export\s+default\s+)?(?:async\s+)?function\*?\s+([A-Za-z_$][\w$]*)/ },
-    { kind: "function", regex: /(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/ },
-    { kind: "function", regex: /(?:export\s+)?(?:let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/ },
-    { kind: "variable", regex: /(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/ },
+    {
+      kind: "function",
+      regex:
+        /(?:export\s+default\s+)?(?:async\s+)?function\*?\s+([A-Za-z_$][\w$]*)/,
+    },
+    {
+      kind: "function",
+      regex:
+        /(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/,
+    },
+    {
+      kind: "function",
+      regex:
+        /(?:export\s+)?(?:let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/,
+    },
+    {
+      kind: "variable",
+      regex: /(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/,
+    },
   ];
 
   for (const pattern of patterns) {
@@ -306,6 +430,21 @@ export function getCanonicalDescriptor(
       const tool = asString(fact.payload.tool);
       if (tool === undefined) return null;
       return { id: tool, kind: "QualityGate", label: tool };
+    }
+    case "entrypoint_candidate": {
+      const entrypointName =
+        asString(fact.payload.name) ??
+        asString(fact.payload.scriptName) ??
+        asString(fact.payload.workflowName) ??
+        asString(fact.payload.taskName) ??
+        asString(fact.payload.artifactName) ??
+        asString(fact.payload.tool);
+      if (entrypointName === undefined) return null;
+      return {
+        id: entrypointName,
+        kind: "EntrypointCandidate",
+        label: entrypointName,
+      };
     }
     default:
       return null;

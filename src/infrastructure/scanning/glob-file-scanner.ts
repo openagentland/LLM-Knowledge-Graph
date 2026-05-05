@@ -4,13 +4,14 @@ import { stat } from "node:fs/promises";
 import { basename, relative, resolve } from "node:path";
 
 import type {
+  ArtifactKind,
   ScanCandidate,
   ScanResult,
   SourceType,
 } from "../../application/dto/ingestion.js";
 import type { FileScannerPort } from "../../application/ports/file-scanner-port.js";
 
-const DEFAULT_INTERNAL_IGNORES = [
+export const DEFAULT_INTERNAL_IGNORES = [
   ".git/**",
   "node_modules/**",
   "dist/**",
@@ -40,6 +41,22 @@ const CODE_EXTENSIONS = new Set([
   ".ts",
   ".unknownlang",
 ]);
+const GENERATED_FILE_NAMES = new Set(["package-lock.json"]);
+const SCHEMA_FILE_NAMES = new Set(["tsconfig.json"]);
+
+export function createIgnoreMatcher(options: {
+  gitignore: string;
+  internalIgnores?: string[];
+}): Ignore {
+  const matcher = ignore();
+  matcher.add(options.gitignore);
+  matcher.add(options.internalIgnores ?? DEFAULT_INTERNAL_IGNORES);
+  return matcher;
+}
+
+export function shouldIgnorePath(path: string, matcher: Ignore): boolean {
+  return matcher.ignores(path) || matcher.ignores(`${path}/`);
+}
 
 export class GlobFileScanner implements FileScannerPort {
   constructor(
@@ -53,9 +70,10 @@ export class GlobFileScanner implements FileScannerPort {
   ) {}
 
   async scan(): Promise<ScanResult> {
-    const matcher = ignore();
-    matcher.add(this.options.gitignore);
-    matcher.add(this.options.internalIgnores ?? DEFAULT_INTERNAL_IGNORES);
+    const matcher = createIgnoreMatcher({
+      gitignore: this.options.gitignore,
+      internalIgnores: this.options.internalIgnores,
+    });
 
     const entries = await glob("**/*", {
       absolute: true,
@@ -74,7 +92,7 @@ export class GlobFileScanner implements FileScannerPort {
         continue;
       }
 
-      if (isIgnored(path, matcher)) {
+      if (shouldIgnorePath(path, matcher)) {
         skipped.push({ path, reason: "ignored" });
         continue;
       }
@@ -91,9 +109,12 @@ export class GlobFileScanner implements FileScannerPort {
         continue;
       }
 
+      const artifactKind = classifyArtifactKind(path, sourceType);
+
       if (
         stats.size > this.options.maxFileSizeBytes &&
-        this.options.skipOversizedFiles === true
+        this.options.skipOversizedFiles === true &&
+        shouldSkipOversizedArtifact(artifactKind)
       ) {
         skipped.push({ path, reason: "too_large" });
         continue;
@@ -101,6 +122,7 @@ export class GlobFileScanner implements FileScannerPort {
 
       candidates.push({
         absolutePath,
+        artifactKind,
         path,
         sizeBytes: stats.size,
         sourceType,
@@ -132,8 +154,49 @@ function classifySourceType(path: string): SourceType | null {
   return null;
 }
 
-function isIgnored(path: string, matcher: Ignore): boolean {
-  return matcher.ignores(path) || matcher.ignores(`${path}/`);
+function classifyArtifactKind(
+  path: string,
+  sourceType: SourceType,
+): ArtifactKind {
+  const fileName = basename(path);
+
+  if (sourceType === "doc") {
+    return "doc";
+  }
+
+  if (GENERATED_FILE_NAMES.has(fileName)) {
+    return "lockfile";
+  }
+
+  if (path.startsWith(".github/workflows/")) {
+    return "workflow";
+  }
+
+  if (SCHEMA_FILE_NAMES.has(fileName)) {
+    return "schema";
+  }
+
+  if (path.startsWith(".devcontainer/") || fileName === ".lintstagedrc.json") {
+    return "config";
+  }
+
+  if (fileName === "package.json" || fileName === "nx.json") {
+    return "config";
+  }
+
+  if (fileName.endsWith(".test.ts") || fileName.endsWith(".spec.ts")) {
+    return "test";
+  }
+
+  if (fileName.endsWith(".sh") || fileName === "bash") {
+    return "script";
+  }
+
+  return "code";
+}
+
+function shouldSkipOversizedArtifact(artifactKind: ArtifactKind): boolean {
+  return artifactKind === "lockfile";
 }
 
 function normalizeRelativePath(cwd: string, absolutePath: string): string {

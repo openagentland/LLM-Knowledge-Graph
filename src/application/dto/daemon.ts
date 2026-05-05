@@ -1,4 +1,14 @@
 import type {
+  AnalyzeImpactCommand,
+  AnalyzeImpactResult,
+  ComputeSliceCommand,
+  ComputeSliceResult,
+  ListEntrypointsCommand,
+  ListEntrypointsResult,
+  TraceFlowCommand,
+  TraceFlowResult,
+} from "./analysis.js";
+import type {
   IndexMode,
   RunIndexResult,
   StatusSnapshot,
@@ -36,6 +46,22 @@ export type DaemonRequest =
   | {
       command: GetSymbolCommand;
       type: "symbol.get";
+    }
+  | {
+      command: ListEntrypointsCommand;
+      type: "entrypoints.list";
+    }
+  | {
+      command: TraceFlowCommand;
+      type: "flow.trace";
+    }
+  | {
+      command: AnalyzeImpactCommand;
+      type: "impact.analyze";
+    }
+  | {
+      command: ComputeSliceCommand;
+      type: "slice.compute";
     };
 
 export type DaemonResponse =
@@ -62,4 +88,20 @@ export type DaemonResponse =
   | {
       result: SymbolDetailResult;
       type: "symbol.get";
+    }
+  | {
+      result: ListEntrypointsResult;
+      type: "entrypoints.list";
+    }
+  | {
+      result: TraceFlowResult;
+      type: "flow.trace";
+    }
+  | {
+      result: AnalyzeImpactResult;
+      type: "impact.analyze";
+    }
+  | {
+      result: ComputeSliceResult;
+      type: "slice.compute";
     };

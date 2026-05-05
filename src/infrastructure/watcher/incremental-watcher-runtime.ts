@@ -1,4 +1,6 @@
 import parcelWatcher, { type AsyncSubscription } from "@parcel/watcher";
+import { readFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
 
 import type { StatusSnapshot } from "../../application/dto/index-lifecycle.js";
 import type { IndexStatePort } from "../../application/ports/index-state-port.js";
@@ -6,6 +8,10 @@ import type { IngestionPipelinePort } from "../../application/ports/ingestion-pi
 import type { LoggerPort } from "../../application/ports/logger-port.js";
 import { RunIndexUseCase } from "../../application/use-cases/run-index-use-case.js";
 import { ERROR_CODES } from "../../shared/errors/lkg-error.js";
+import {
+  createIgnoreMatcher,
+  shouldIgnorePath,
+} from "../scanning/glob-file-scanner.js";
 
 const DEFAULT_DEBOUNCE_MS = 250;
 
@@ -44,14 +50,17 @@ export class IncrementalWatcherRuntime {
   private followUpRequested = false;
   private running = false;
   private stopped = false;
+  private readonly ignoreMatcher;
   private readonly unsubscribePromise: Promise<AsyncSubscription>;
 
   constructor(
     private readonly options: {
       cwd: string;
       debounceMs?: number;
+      gitignore?: string;
       indexRunner: IndexRunner;
       indexStatePort: IndexStatePort;
+      internalIgnores?: string[];
       logger: LoggerPort;
       statusContext: {
         activeProjectIdentity: string;
@@ -60,6 +69,12 @@ export class IncrementalWatcherRuntime {
       watchFactory?: WatchFactory;
     },
   ) {
+    this.ignoreMatcher = createIgnoreMatcher({
+      gitignore:
+        this.options.gitignore ??
+        readFileSync(resolve(this.options.cwd, ".gitignore"), "utf8"),
+      internalIgnores: this.options.internalIgnores,
+    });
     const watchFactory = this.options.watchFactory ?? defaultWatchFactory;
     this.unsubscribePromise = watchFactory(
       this.options.cwd,
@@ -98,15 +113,24 @@ export class IncrementalWatcherRuntime {
   }
 
   private async handleChanges(paths: string[]): Promise<void> {
+    const changedPaths = paths
+      .map((path) => normalizeWatchedPath(this.options.cwd, path))
+      .filter((path) => path.length > 0)
+      .filter((path) => !shouldIgnorePath(path, this.ignoreMatcher));
+
+    if (changedPaths.length === 0) {
+      return;
+    }
+
     await this.options.indexStatePort.markWatcherPending({
       activeProjectIdentity: this.options.statusContext.activeProjectIdentity,
       indexScope: this.options.statusContext.indexScope,
     });
 
     this.options.logger.info("Watcher requested index run", {
-      changedPaths: paths,
+      changedPaths,
       event: "watcher.triggered",
-      pathCount: paths.length,
+      pathCount: changedPaths.length,
     });
 
     this.scheduleRun();
@@ -172,4 +196,8 @@ function defaultWatchFactory(
   callback: (error: Error | null, events: WatchEvent[]) => void,
 ): Promise<AsyncSubscription> {
   return parcelWatcher.subscribe(cwd, callback);
+}
+
+function normalizeWatchedPath(cwd: string, path: string): string {
+  return relative(resolve(cwd), resolve(path)).replace(/\\/g, "/");
 }

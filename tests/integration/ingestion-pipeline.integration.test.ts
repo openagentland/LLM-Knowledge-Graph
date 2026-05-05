@@ -10,6 +10,7 @@ import {
   readDerivedFacts,
   readInternalGraph,
   readManifest,
+  readOverlays,
   readStructuredObservations,
   readSymbols,
   readVectorStore,
@@ -44,6 +45,7 @@ describe("DefaultIngestionPipeline", () => {
       const manifest = (await readManifest(homeDir)) as Array<{ path: string }>;
       const symbols = await readSymbols(homeDir);
       const observations = await readStructuredObservations(homeDir);
+      const overlays = await readOverlays(homeDir);
 
       expect(summary.counters.filesTotal).toBe(2);
       expect(summary.counters.filesIndexed).toBe(2);
@@ -70,6 +72,17 @@ describe("DefaultIngestionPipeline", () => {
         codeChunks.some((chunk) => chunk.extractor.startsWith("ast-grep:")),
       ).toBe(true);
       expect(summary.observations.length).toBeGreaterThan(0);
+      expect(overlays.records.map((record) => record.kind).sort()).toEqual([
+        "cfg",
+        "data_flow",
+        "pdg_lite",
+      ]);
+      expect(
+        overlays.records.every((record) => record.version === "milestone-4.1"),
+      ).toBe(true);
+      expect(overlays.records.some((record) => record.edges.length > 0)).toBe(
+        true,
+      );
       expect(
         observations.some(
           (observation) =>
@@ -272,6 +285,46 @@ describe("DefaultIngestionPipeline", () => {
         docChunks.some((chunk) => chunk.docLocation?.section === "Details"),
       ).toBe(true);
     });
+
+    it("keeps degraded oversized valuable files indexable instead of failing whole-file ingestion", async () => {
+      const cwd = await materializeFixtureProject("ingestion-basic");
+      const homeDir = await createTempHomeDir();
+      await writeFile(
+        join(cwd, "large.ts"),
+        `${"export const first = 1;\n".repeat(200)}\n${"{ invalid syntax\n".repeat(600)}`,
+        "utf8",
+      );
+      const pipeline = createIntegrationPipeline(cwd, homeDir);
+
+      const summary = await pipeline.run({
+        indexRunId: "run-degraded",
+        mode: "full",
+      });
+      const manifest = (await readManifest(homeDir)) as Array<{
+        latestPartitionStatus?: string;
+        path: string;
+      }>;
+      const largeChunks = summary.chunks.filter(
+        (chunk) => chunk.path === "large.ts",
+      );
+      const largeManifest:
+        | {
+            latestPartitionStatus?: string;
+            path: string;
+          }
+        | undefined = manifest.find((entry) => entry.path === "large.ts");
+
+      expect(summary.counters.errors).toBe(0);
+      expect(largeChunks.length).toBeGreaterThan(0);
+      expect(largeManifest).toBeDefined();
+      expect(largeManifest?.path).toBe("large.ts");
+      expect(largeManifest?.latestPartitionStatus).toMatch(
+        /^(partial|degraded)$/,
+      );
+      expect(summary.skipped.some((entry) => entry.path === "large.ts")).toBe(
+        false,
+      );
+    });
   });
 
   describe("structured fact and graph persistence", () => {
@@ -303,30 +356,57 @@ describe("DefaultIngestionPipeline", () => {
 
       expect(canonicalFacts).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ kind: "config_artifact", path: "package.json" }),
-          expect.objectContaining({ kind: "workspace_task", path: "package.json" }),
-          expect.objectContaining({ kind: "package_script", path: "package.json" }),
+          expect.objectContaining({
+            kind: "config_artifact",
+            path: "package.json",
+          }),
+          expect.objectContaining({
+            kind: "workspace_task",
+            path: "package.json",
+          }),
+          expect.objectContaining({
+            kind: "package_script",
+            path: "package.json",
+          }),
         ]),
       );
       expect(derivedFacts).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ kind: "task-runs-command", path: "package.json" }),
-          expect.objectContaining({ kind: "quality-gate-runs-script-candidate", path: "package.json" }),
+          expect.objectContaining({
+            kind: "task-runs-command",
+            path: "package.json",
+          }),
+          expect.objectContaining({
+            kind: "quality-gate-runs-script-candidate",
+            path: "package.json",
+          }),
         ]),
       );
       expect(graph.nodes).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ kind: "ConfigArtifact", path: "package.json" }),
+          expect.objectContaining({
+            kind: "ConfigArtifact",
+            path: "package.json",
+          }),
           expect.objectContaining({ kind: "Task", path: "package.json" }),
-          expect.objectContaining({ kind: "PackageScript", path: "package.json" }),
+          expect.objectContaining({
+            kind: "PackageScript",
+            path: "package.json",
+          }),
           expect.objectContaining({ kind: "Command", path: "package.json" }),
         ]),
       );
       expect(graph.edges).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ kind: "REPRESENTS", path: "package.json" }),
-          expect.objectContaining({ kind: "task-runs-command", path: "package.json" }),
-          expect.objectContaining({ kind: "quality-gate-runs-script-candidate", path: "package.json" }),
+          expect.objectContaining({
+            kind: "task-runs-command",
+            path: "package.json",
+          }),
+          expect.objectContaining({
+            kind: "quality-gate-runs-script-candidate",
+            path: "package.json",
+          }),
         ]),
       );
     });
@@ -336,16 +416,27 @@ describe("DefaultIngestionPipeline", () => {
     it("does not crash indexing for unsupported languages", async () => {
       const cwd = await materializeFixtureProject("ingestion-basic");
       const homeDir = await createTempHomeDir();
-      await writeFile(join(cwd, "script.unknownlang"), "print('hello')\n", "utf8");
+      await writeFile(
+        join(cwd, "script.unknownlang"),
+        "print('hello')\n",
+        "utf8",
+      );
       const pipeline = createIntegrationPipeline(cwd, homeDir);
 
-      const summary = await pipeline.run({ indexRunId: "run-unsupported", mode: "full" });
+      const summary = await pipeline.run({
+        indexRunId: "run-unsupported",
+        mode: "full",
+      });
       const observations = await readStructuredObservations(homeDir);
 
       expect(summary.counters.errors).toBe(0);
       expect(summary.chunks.length).toBeGreaterThan(0);
-      expect(summary.chunks.some((chunk) => chunk.path === "script.unknownlang")).toBe(true);
-      expect(observations.every((observation) => observation.language !== null)).toBe(true);
+      expect(
+        summary.chunks.some((chunk) => chunk.path === "script.unknownlang"),
+      ).toBe(true);
+      expect(
+        observations.every((observation) => observation.language !== null),
+      ).toBe(true);
     });
 
     it("continues text indexing when structured analyzers fail", async () => {
@@ -378,12 +469,19 @@ describe("DefaultIngestionPipeline", () => {
         return analyzers;
       };
 
-      const summary = await pipeline.run({ indexRunId: "run-fail-soft", mode: "full" });
+      const summary = await pipeline.run({
+        indexRunId: "run-fail-soft",
+        mode: "full",
+      });
       const storedRecords = await readVectorStore(homeDir);
 
       expect(summary.counters.errors).toBe(0);
-      expect(storedRecords.some((record) => record.path === "broken.ts")).toBe(true);
-      expect(summary.chunks.some((chunk) => chunk.path === "broken.ts")).toBe(true);
+      expect(storedRecords.some((record) => record.path === "broken.ts")).toBe(
+        true,
+      );
+      expect(summary.chunks.some((chunk) => chunk.path === "broken.ts")).toBe(
+        true,
+      );
     });
   });
 });

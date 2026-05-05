@@ -40,7 +40,7 @@ describe("MCP server e2e", () => {
       expect(result.capabilities).toHaveProperty("tools");
     });
 
-    it("lists lkg.status, lkg.index, lkg.search, lkg.symbols, and lkg.symbol tools", async () => {
+    it("lists the full stable MCP tool surface", async () => {
       const initializedClient = await startInitializedClient();
 
       const result = await initializedClient.listTools();
@@ -54,6 +54,10 @@ describe("MCP server e2e", () => {
       expect(toolNames).toContain("lkg.search");
       expect(toolNames).toContain("lkg.symbols");
       expect(toolNames).toContain("lkg.symbol");
+      expect(toolNames).toContain("lkg.entrypoints");
+      expect(toolNames).toContain("lkg.flow");
+      expect(toolNames).toContain("lkg.impact");
+      expect(toolNames).toContain("lkg.slice");
     });
   });
 
@@ -145,6 +149,229 @@ describe("MCP server e2e", () => {
       expect(payload.code).toBe("INDEX_NOT_READY");
     });
 
+    it("returns enriched search evidence after indexing", async () => {
+      const initializedClient = await startInitializedClient();
+
+      await initializedClient.callTool("lkg.index", { mode: "full" });
+
+      const result = await initializedClient.callTool("lkg.search", {
+        query: "fixture",
+      });
+      const payload = parseToolTextPayload<{
+        results: Array<{
+          artifact_kind: string;
+          evidence_id: string;
+          partition_id?: string;
+          partition_index?: number;
+          partition_status?: string;
+          partition_total?: number;
+          path: string;
+          provenance: {
+            content_hash: string;
+            extractor: string;
+            index_run_id: string;
+          };
+          snippet: string;
+          source_type: string;
+        }>;
+      }>(result);
+      const firstResult = payload.results[0];
+
+      expect(result.isError).not.toBe(true);
+      expect(payload.results.length).toBeGreaterThan(0);
+      expect(firstResult?.artifact_kind).toMatch(
+        /^(code|config|doc|generated|lockfile|schema|script|test|workflow)$/,
+      );
+      expect(firstResult?.evidence_id).toEqual(expect.any(String));
+      expect(firstResult?.path).toEqual(expect.any(String));
+      expect(firstResult?.provenance.content_hash).toEqual(expect.any(String));
+      expect(firstResult?.provenance.extractor).toEqual(expect.any(String));
+      expect(firstResult?.provenance.index_run_id).toEqual(expect.any(String));
+      expect(firstResult?.snippet).toEqual(expect.any(String));
+      expect(firstResult?.source_type).toMatch(/^(code|doc)$/);
+      if (firstResult?.partition_id !== undefined) {
+        expect(firstResult.partition_index).toEqual(expect.any(Number));
+        expect(firstResult.partition_status).toMatch(
+          /^(complete|degraded|failed|partial|skipped)$/,
+        );
+        expect(firstResult.partition_total).toEqual(expect.any(Number));
+      }
+    });
+
+    it("returns analysis tool payloads after indexing", async () => {
+      const initializedClient = await startInitializedClient();
+
+      await initializedClient.callTool("lkg.index", { mode: "full" });
+
+      const entrypointsResult = await initializedClient.callTool(
+        "lkg.entrypoints",
+        {
+          query: "main",
+        },
+      );
+      const entrypointsPayload = parseToolTextPayload<{
+        limitations?: Array<{ detail: string; kind: string }>;
+        results: Array<{
+          confidence: number;
+          detection_reason: string;
+          evidence: Array<{
+            path: string;
+            source_type: string;
+          }>;
+          kind: string;
+          name: string;
+          path: string;
+          precision_tier: string;
+        }>;
+      }>(entrypointsResult);
+
+      const flowResult = await initializedClient.callTool("lkg.flow", {
+        from: {
+          kind: "symbol",
+          name: "mcpFixtureEntry",
+          path: "main.ts",
+          source_type: "code",
+          start_line: 1,
+          end_line: 3,
+        },
+      });
+      const flowPayload = parseToolTextPayload<{
+        limitations?: Array<{ detail: string; kind: string }>;
+        traces: Array<{
+          completeness: string;
+          precision_tier: string;
+          segments: Array<{
+            relation_kind: string;
+            to: { name: string; path?: string };
+          }>;
+          start: { name: string };
+        }>;
+      }>(flowResult);
+
+      const impactResult = await initializedClient.callTool("lkg.impact", {
+        target: {
+          kind: "symbol",
+          name: "mcpFixtureEntry",
+          path: "main.ts",
+          source_type: "code",
+          start_line: 1,
+          end_line: 3,
+        },
+      });
+      const impactPayload = parseToolTextPayload<{
+        impacts: Array<{
+          classification: string;
+          kind: string;
+          precision_tier: string;
+          reasons: Array<{ detail: string; relation_kind: string }>;
+        }>;
+        limitations?: Array<{ detail: string; kind: string }>;
+        summary: {
+          direct_count: number;
+          possible_count: number;
+          transitive_count: number;
+          truncated: boolean;
+        };
+      }>(impactResult);
+
+      const sliceResult = await initializedClient.callTool("lkg.slice", {
+        criterion: {
+          kind: "symbol",
+          name: "mcpFixtureEntry",
+          path: "main.ts",
+          source_type: "code",
+          start_line: 1,
+          end_line: 3,
+        },
+      });
+      const slicePayload = parseToolTextPayload<{
+        completeness: string;
+        criterion: { name: string };
+        items: Array<{
+          inclusion_reason: string;
+          precision_tier: string;
+        }>;
+        limitations?: Array<{ detail: string; kind: string }>;
+      }>(sliceResult);
+
+      expect(entrypointsResult.isError).not.toBe(true);
+      expect(Array.isArray(entrypointsPayload.results)).toBe(true);
+      expect(entrypointsPayload.limitations?.[0]?.detail).toContain(
+        "Phase 1 entrypoint detection",
+      );
+
+      expect(flowResult.isError).not.toBe(true);
+      expect(flowPayload.traces).toHaveLength(1);
+      expect(flowPayload.traces[0]?.start.name).toBe("mcpFixtureEntry");
+      expect(flowPayload.traces[0]?.precision_tier).toMatch(
+        /^(derived|unknown)$/,
+      );
+      expect(Array.isArray(flowPayload.traces[0]?.segments)).toBe(true);
+      expect(flowPayload.limitations?.[0]?.detail).toContain("analysis budget");
+
+      expect(impactResult.isError).not.toBe(true);
+      expect(impactPayload.summary.direct_count).toBeGreaterThanOrEqual(0);
+      expect(impactPayload.summary.possible_count).toBeGreaterThanOrEqual(0);
+      expect(impactPayload.limitations?.[0]?.detail).toMatch(
+        /Phase 1 impact analysis|bounded derived-relation analysis/,
+      );
+
+      expect(sliceResult.isError).not.toBe(true);
+      expect(slicePayload.criterion.name).toBe("mcpFixtureEntry");
+      expect(slicePayload.completeness).toMatch(/^(partial|truncated)$/);
+      expect(slicePayload.limitations?.[0]?.detail).toMatch(
+        /Phase 1 slices|bounded derived-relation analysis/,
+      );
+    });
+
+    it("returns an MCP tool error payload when analysis tools run before indexing", async () => {
+      const initializedClient = await startInitializedClient();
+
+      const entrypointsResult = await initializedClient.callTool(
+        "lkg.entrypoints",
+        {
+          query: "main",
+        },
+      );
+      const flowResult = await initializedClient.callTool("lkg.flow", {
+        from: {
+          kind: "symbol",
+          name: "mcpFixtureEntry",
+          path: "main.ts",
+          source_type: "code",
+        },
+      });
+      const impactResult = await initializedClient.callTool("lkg.impact", {
+        target: {
+          kind: "symbol",
+          name: "mcpFixtureEntry",
+          path: "main.ts",
+          source_type: "code",
+        },
+      });
+      const sliceResult = await initializedClient.callTool("lkg.slice", {
+        criterion: {
+          kind: "symbol",
+          name: "mcpFixtureEntry",
+          path: "main.ts",
+          source_type: "code",
+        },
+      });
+
+      expect(
+        parseToolTextPayload<{ code: string }>(entrypointsResult).code,
+      ).toBe("ANALYSIS_NOT_READY");
+      expect(parseToolTextPayload<{ code: string }>(flowResult).code).toBe(
+        "ANALYSIS_NOT_READY",
+      );
+      expect(parseToolTextPayload<{ code: string }>(impactResult).code).toBe(
+        "ANALYSIS_NOT_READY",
+      );
+      expect(parseToolTextPayload<{ code: string }>(sliceResult).code).toBe(
+        "ANALYSIS_NOT_READY",
+      );
+    });
+
     it("returns candidate-first symbol evidence after indexing", async () => {
       const initializedClient = await startInitializedClient();
 
@@ -217,7 +444,9 @@ describe("MCP server e2e", () => {
       expect(detailPayload.candidates).toHaveLength(1);
       expect(firstDetailResult?.name).toBe("mcpFixtureEntry");
       expect(firstDetailResult?.evidence.path).toBe("main.ts");
-      expect(firstDetailResult?.evidence.code_location.end_line).toBeGreaterThanOrEqual(1);
+      expect(
+        firstDetailResult?.evidence.code_location.end_line,
+      ).toBeGreaterThanOrEqual(1);
     });
 
     it("returns an MCP tool error payload for invalid lkg.symbol input", async () => {
@@ -232,7 +461,6 @@ describe("MCP server e2e", () => {
       expect(result.isError).toBe(true);
       expect(content[0]?.text).toContain("MCP error -32602");
     });
-
   });
 
   describe("index lifecycle and validation", () => {

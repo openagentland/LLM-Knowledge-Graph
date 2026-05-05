@@ -100,8 +100,13 @@ function toSearchEvidence(record: RetrievedChunk): SearchEvidence {
     }
 
     return {
+      artifactKind: record.artifactKind,
       codeLocation: record.codeLocation,
       evidenceId: record.evidenceId,
+      partitionId: record.partitionId,
+      partitionIndex: record.partitionIndex,
+      partitionStatus: record.partitionStatus,
+      partitionTotal: record.partitionTotal,
       path: record.path,
       provenance: {
         contentHash: record.contentHash,
@@ -123,8 +128,13 @@ function toSearchEvidence(record: RetrievedChunk): SearchEvidence {
   }
 
   return {
+    artifactKind: record.artifactKind,
     docLocation: record.docLocation,
     evidenceId: record.evidenceId,
+    partitionId: record.partitionId,
+    partitionIndex: record.partitionIndex,
+    partitionStatus: record.partitionStatus,
+    partitionTotal: record.partitionTotal,
     path: record.path,
     provenance: {
       contentHash: record.contentHash,

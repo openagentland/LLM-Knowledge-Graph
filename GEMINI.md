@@ -4,9 +4,8 @@ Before making implementation decisions, read these first:
 
 1. `docs/vision.md`
 2. `docs/developer-guide.md`
-3. `.claude/plan-0.3.md`
 
-Treat `docs/vision.md` and `docs/developer-guide.md` as the source of truth for direction and architecture boundaries. Use the plan files as implementation-phase context: v0.1, v0.2 is complete, and v0.3 is the current in-flight foundation.
+Treat `docs/vision.md` and `docs/developer-guide.md` as the source of truth for direction and architecture boundaries. Use the plan files as implementation-phase context; Milestones 1-4 are complete
 
 ## Working Principles
 
@@ -57,14 +56,21 @@ Use this default workflow:
 3. Use `lkg.search` for broad evidence retrieval when you are still locating relevant implementation or documentation.
 4. Use `lkg.symbols` for candidate discovery when symbol identity is ambiguous.
 5. Use `lkg.symbol` only after you know the target `path` and `symbol`, or after `lkg.symbols` narrows the candidates.
-6. Read source files only after LKG retrieval narrows the scope.
-7. Keep responses evidence-first with explicit path, location, and provenance.
+6. Use `lkg.entrypoints` when the goal is to discover evidence-backed project starting surfaces.
+7. Use `lkg.flow` for bounded evidence-backed trace retrieval from or between anchors.
+8. Use `lkg.impact` for bounded blast-radius analysis from a target anchor.
+9. Use `lkg.slice` for a bounded evidence set around a criterion anchor.
+10. Read source files only after LKG retrieval narrows the scope.
+11. Keep responses evidence-first with explicit path, location, and provenance.
 
 ### Practical tool order
 
 - **Operational flow**: `lkg.status` -> `lkg.index` if needed -> `lkg.status` again if you need a post-index snapshot.
 - **Broad retrieval flow**: `lkg.status` if freshness matters -> `lkg.search` -> read narrowed files.
 - **Symbol flow**: `lkg.status` if readiness is uncertain -> `lkg.symbols` -> `lkg.symbol` -> read narrowed files.
+- **Entrypoint flow**: `lkg.status` if readiness is uncertain -> `lkg.entrypoints` -> read narrowed files when deeper verification is needed.
+- **Flow/impact flow**: `lkg.status` if freshness is uncertain -> `lkg.flow` or `lkg.impact` -> read narrowed files to verify high-value edges.
+- **Slice flow**: `lkg.status` if freshness is uncertain -> `lkg.slice` -> read narrowed files for execution context.
 
 ## Current Skills
 
@@ -75,6 +81,10 @@ Current skills are thin orchestration wrappers over the implemented MCP tools. T
 - `lkg-search` -> `lkg.search`
 - `lkg-symbols` -> `lkg.symbols`
 - `lkg-symbol` -> `lkg.symbol`
+- `lkg-entrypoints` -> `lkg.entrypoints`
+- `lkg-flow` -> `lkg.flow`
+- `lkg-impact` -> `lkg.impact`
+- `lkg-slice` -> `lkg.slice`
 
 Use a skill when the task is a direct single-tool action and the intended MCP operation is already clear.
 
@@ -89,8 +99,8 @@ Current agents are orchestration-only surfaces that coordinate the implemented M
 
 - `LKG Explorer` (`agents/explorer.md`)
   - Use for retrieval workflows.
-  - Handles evidence search, candidate-first symbol discovery, and symbol detail lookup.
-  - Scope is limited to `lkg.search`, `lkg.symbols`, `lkg.symbol`, and optional freshness checks through `lkg.status`.
+  - Handles evidence search, candidate-first symbol discovery/detail, entrypoint discovery, bounded flow tracing, bounded impact analysis, and bounded slicing.
+  - Scope is limited to `lkg.search`, `lkg.symbols`, `lkg.symbol`, `lkg.entrypoints`, `lkg.flow`, `lkg.impact`, `lkg.slice`, and optional freshness checks through `lkg.status`.
 
 Use an agent when the task needs multi-step orchestration across the current MCP tools. Use a skill when one exact tool action is enough.
 
@@ -101,20 +111,3 @@ Use an agent when the task needs multi-step orchestration across the current MCP
 - Agents may coordinate current MCP tools, but must not invent product logic or bypass MCP contracts.
 - Do not implement indexing or retrieval logic in prompts.
 - If capability is missing, add it in code through architecture boundaries (`presentation -> application -> infrastructure`) before documenting it in prompts.
-
-## Capability and Roadmap Scope
-
-Current available MCP tools:
-
-- `lkg.status`
-- `lkg.index`
-- `lkg.search`
-- `lkg.symbols`
-- `lkg.symbol`
-
-Current operational scope:
-
-- The current stable public MCP surface is `lkg.status`, `lkg.index`, `lkg.search`, `lkg.symbols`, and `lkg.symbol`.
-- `lkg.status`, `lkg.index`, and `lkg.search` remain the baseline operational workflow.
-- `lkg.symbols` and `lkg.symbol` are stable v0.2 capabilities, but prompt assets must still describe them conservatively as candidate-first, provenance-rich symbol capabilities rather than flow/impact-grade certainty.
-- Do not claim support for later-phase tools such as `lkg.graph`, `lkg.impact`, `lkg.flow`, `lkg.context`, `lkg.arch`, or `lkg.ask` until they are implemented and stable in code.

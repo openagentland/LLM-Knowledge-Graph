@@ -385,8 +385,10 @@ function buildChunk(
   const locationKey = codeLocation
     ? `${codeLocation.startLine}:${codeLocation.endLine}`
     : `${docLocation?.section ?? "section"}:${docLocation?.offset ?? 0}`;
+  const partition = resolvePartition(document, codeLocation, docLocation);
 
   return {
+    artifactKind: document.artifactKind,
     codeLocation,
     content,
     contentHash,
@@ -397,9 +399,55 @@ function buildChunk(
       .slice(0, 24),
     extractor,
     indexRunId,
+    partitionId: partition?.partitionId,
+    partitionIndex: partition?.index,
+    partitionStatus: partition?.status,
+    partitionTotal: partition?.total,
     path: document.path,
     sourceType: document.sourceType,
   };
+}
+
+function resolvePartition(
+  document: ParsedDocument,
+  codeLocation: CodeLocation | undefined,
+  docLocation: DocLocation | undefined,
+) {
+  const partitions = document.partitions ?? [];
+  if (partitions.length <= 1) {
+    return partitions[0];
+  }
+
+  if (codeLocation) {
+    return partitions.find((partition) => {
+      if (!partition.location || !("startLine" in partition.location)) {
+        return false;
+      }
+
+      return (
+        codeLocation.startLine >= partition.location.startLine &&
+        codeLocation.endLine <= partition.location.endLine
+      );
+    });
+  }
+
+  if (docLocation) {
+    return partitions.find((partition) => {
+      if (!partition.location || !("offset" in partition.location)) {
+        return false;
+      }
+
+      const sameSection =
+        docLocation.section === undefined ||
+        partition.location.section === undefined ||
+        partition.location.section === docLocation.section;
+      const partitionOffset = partition.location.offset ?? 0;
+      const chunkOffset = docLocation.offset ?? 0;
+      return sameSection && partitionOffset <= chunkOffset;
+    });
+  }
+
+  return partitions[0];
 }
 
 function augmentDocLocation(

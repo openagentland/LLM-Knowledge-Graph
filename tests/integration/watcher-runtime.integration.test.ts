@@ -46,6 +46,7 @@ describe("Watcher runtime integration", () => {
       const runtime = new IncrementalWatcherRuntime({
         cwd: "/repo/project",
         debounceMs: 25,
+        gitignore: "",
         indexRunner,
         indexStatePort: {
           getRecord: vi.fn(),
@@ -69,8 +70,8 @@ describe("Watcher runtime integration", () => {
           }),
       });
 
-      await runtime.notifyPathsChanged(["src/a.ts"]);
-      await runtime.notifyPathsChanged(["src/b.ts"]);
+      await runtime.notifyPathsChanged(["/repo/project/src/a.ts"]);
+      await runtime.notifyPathsChanged(["/repo/project/src/b.ts"]);
       scheduledCallback?.();
       await Promise.resolve();
       await Promise.resolve();
@@ -115,6 +116,7 @@ describe("Watcher runtime integration", () => {
       const runtime = new IncrementalWatcherRuntime({
         cwd: "/repo/project",
         debounceMs: 25,
+        gitignore: "",
         indexRunner,
         indexStatePort: {
           getRecord: vi.fn(),
@@ -138,10 +140,10 @@ describe("Watcher runtime integration", () => {
           }),
       });
 
-      await runtime.notifyPathsChanged(["src/a.ts"]);
+      await runtime.notifyPathsChanged(["/repo/project/src/a.ts"]);
       scheduledCallback?.();
       await Promise.resolve();
-      await runtime.notifyPathsChanged(["src/b.ts"]);
+      await runtime.notifyPathsChanged(["/repo/project/src/b.ts"]);
       resolveRun?.();
       await Promise.resolve();
       scheduledCallback?.();
@@ -149,6 +151,147 @@ describe("Watcher runtime integration", () => {
       await Promise.resolve();
 
       expect(indexRunner.execute).toHaveBeenCalledTimes(2);
+
+      await runtime.close();
+    } finally {
+      global.setTimeout = originalSetTimeout;
+      global.clearTimeout = originalClearTimeout;
+    }
+  });
+
+  it("ignores watcher-only noise and does not schedule incremental work", async () => {
+    let scheduledCallback: (() => void) | null = null;
+    const originalSetTimeout = global.setTimeout;
+    const originalClearTimeout = global.clearTimeout;
+    global.setTimeout = vi.fn(((callback: () => void) => {
+      scheduledCallback = callback;
+      return { token: "timeout" } as unknown as NodeJS.Timeout;
+    }) as typeof global.setTimeout);
+    global.clearTimeout = vi.fn();
+
+    try {
+      const markWatcherPending = vi.fn().mockResolvedValue({});
+      const logger = createLogger();
+      const indexRunner = {
+        execute: vi.fn().mockResolvedValue({
+          acceptedAt: "2026-05-04T00:00:00.000Z",
+          indexRunId: "run-ignored",
+          mode: "incremental",
+          state: "idle",
+        }),
+      };
+      const runtime = new IncrementalWatcherRuntime({
+        cwd: "/repo/project",
+        debounceMs: 25,
+        gitignore: "",
+        indexRunner,
+        indexStatePort: {
+          getRecord: vi.fn(),
+          getStatus: vi.fn(),
+          markCompleted: vi.fn(),
+          markFailed: vi.fn(),
+          markRunning: vi.fn(),
+          markWatcherFailed: vi.fn(),
+          markWatcherPending,
+          saveProgress: vi.fn(),
+          saveStatusSnapshot: vi.fn(),
+        },
+        logger,
+        statusContext: {
+          activeProjectIdentity: "project-a",
+          indexScope: "shared",
+        },
+        watchFactory: () =>
+          Promise.resolve({
+            unsubscribe: vi.fn().mockResolvedValue(undefined),
+          }),
+      });
+
+      await runtime.notifyPathsChanged([
+        "/repo/project/.git/FETCH_HEAD",
+        "/repo/project/.git/index.lock",
+        "/repo/project/.claude/plan-4.1.md",
+      ]);
+
+      expect(markWatcherPending).not.toHaveBeenCalled();
+      expect(indexRunner.execute).not.toHaveBeenCalled();
+      expect(scheduledCallback).toBeNull();
+      expect(logger.info).not.toHaveBeenCalledWith(
+        "Watcher requested index run",
+        expect.anything(),
+      );
+
+      await runtime.close();
+    } finally {
+      global.setTimeout = originalSetTimeout;
+      global.clearTimeout = originalClearTimeout;
+    }
+  });
+
+  it("keeps relevant source changes after filtering ignored noise", async () => {
+    let scheduledCallback: (() => void) | null = null;
+    const originalSetTimeout = global.setTimeout;
+    const originalClearTimeout = global.clearTimeout;
+    global.setTimeout = vi.fn(((callback: () => void) => {
+      scheduledCallback = callback;
+      return { token: "timeout" } as unknown as NodeJS.Timeout;
+    }) as typeof global.setTimeout);
+    global.clearTimeout = vi.fn();
+
+    try {
+      const markWatcherPending = vi.fn().mockResolvedValue({});
+      const logger = createLogger();
+      const indexRunner = {
+        execute: vi.fn().mockResolvedValue({
+          acceptedAt: "2026-05-04T00:00:00.000Z",
+          indexRunId: "run-mixed",
+          mode: "incremental",
+          state: "idle",
+        }),
+      };
+      const runtime = new IncrementalWatcherRuntime({
+        cwd: "/repo/project",
+        debounceMs: 25,
+        gitignore: "",
+        indexRunner,
+        indexStatePort: {
+          getRecord: vi.fn(),
+          getStatus: vi.fn(),
+          markCompleted: vi.fn(),
+          markFailed: vi.fn(),
+          markRunning: vi.fn(),
+          markWatcherFailed: vi.fn(),
+          markWatcherPending,
+          saveProgress: vi.fn(),
+          saveStatusSnapshot: vi.fn(),
+        },
+        logger,
+        statusContext: {
+          activeProjectIdentity: "project-a",
+          indexScope: "shared",
+        },
+        watchFactory: () =>
+          Promise.resolve({
+            unsubscribe: vi.fn().mockResolvedValue(undefined),
+          }),
+      });
+
+      await runtime.notifyPathsChanged([
+        "/repo/project/.git/FETCH_HEAD",
+        "/repo/project/src/a.ts",
+        "/repo/project/.claude/plan-4.1.md",
+      ]);
+      scheduledCallback?.();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(markWatcherPending).toHaveBeenCalledTimes(1);
+      expect(indexRunner.execute).toHaveBeenCalledTimes(1);
+      expect(logger.info).toHaveBeenCalledWith("Watcher requested index run", {
+        changedPaths: ["src/a.ts"],
+        event: "watcher.triggered",
+        pathCount: 1,
+      });
 
       await runtime.close();
     } finally {
@@ -173,6 +316,7 @@ describe("Watcher runtime integration", () => {
       const runtime = new IncrementalWatcherRuntime({
         cwd: "/repo/project",
         debounceMs: 25,
+        gitignore: "",
         indexRunner: {
           execute: vi.fn().mockRejectedValue(new Error("boom")),
         },
@@ -198,7 +342,7 @@ describe("Watcher runtime integration", () => {
           }),
       });
 
-      await runtime.notifyPathsChanged(["src/a.ts"]);
+      await runtime.notifyPathsChanged(["/repo/project/src/a.ts"]);
       scheduledCallback?.();
       await Promise.resolve();
       await Promise.resolve();

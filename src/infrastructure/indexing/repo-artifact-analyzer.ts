@@ -17,13 +17,19 @@ export class RepoArtifactAnalyzer implements StructuredAnalyzerPort {
     indexRunId: string;
   }): Promise<StructuredObservation[]> {
     if (context.document.path === "package.json") {
-      return Promise.resolve(analyzePackageJson(context.document, context.indexRunId));
+      return Promise.resolve(
+        analyzePackageJson(context.document, context.indexRunId),
+      );
     }
     if (context.document.path === "nx.json") {
-      return Promise.resolve(analyzeNxConfig(context.document, context.indexRunId));
+      return Promise.resolve(
+        analyzeNxConfig(context.document, context.indexRunId),
+      );
     }
     if (context.document.path.startsWith(".github/workflows/")) {
-      return Promise.resolve(analyzeWorkflow(context.document, context.indexRunId));
+      return Promise.resolve(
+        analyzeWorkflow(context.document, context.indexRunId),
+      );
     }
 
     return Promise.resolve([
@@ -32,7 +38,7 @@ export class RepoArtifactAnalyzer implements StructuredAnalyzerPort {
         indexRunId: context.indexRunId,
         kind: "config_artifact",
         name: context.document.path,
-        symbolKind: "config",
+        symbolKind: context.document.artifactKind,
         text: context.document.content,
       }),
     ]);
@@ -52,7 +58,10 @@ function isArtifactPath(path: string): boolean {
   );
 }
 
-function analyzePackageJson(document: ParsedDocument, indexRunId: string): StructuredObservation[] {
+function analyzePackageJson(
+  document: ParsedDocument,
+  indexRunId: string,
+): StructuredObservation[] {
   const observations: StructuredObservation[] = [
     createArtifactObservation({
       document,
@@ -81,7 +90,10 @@ function analyzePackageJson(document: ParsedDocument, indexRunId: string): Struc
   return observations;
 }
 
-function analyzeNxConfig(document: ParsedDocument, indexRunId: string): StructuredObservation[] {
+function analyzeNxConfig(
+  document: ParsedDocument,
+  indexRunId: string,
+): StructuredObservation[] {
   return [
     createArtifactObservation({
       document,
@@ -94,7 +106,10 @@ function analyzeNxConfig(document: ParsedDocument, indexRunId: string): Structur
   ];
 }
 
-function analyzeWorkflow(document: ParsedDocument, indexRunId: string): StructuredObservation[] {
+function analyzeWorkflow(
+  document: ParsedDocument,
+  indexRunId: string,
+): StructuredObservation[] {
   const observations: StructuredObservation[] = [
     createArtifactObservation({
       document,
@@ -126,7 +141,11 @@ function analyzeWorkflow(document: ParsedDocument, indexRunId: string): Structur
         document,
         indexRunId,
         kind: "quality_gate",
-        metadata: { command: gate.command, scriptName: gate.scriptName, tool: gate.tool },
+        metadata: {
+          command: gate.command,
+          scriptName: gate.scriptName,
+          tool: gate.tool,
+        },
         name: gate.tool,
         symbolKind: "quality-gate",
         text: `${gate.tool}:${gate.command}`,

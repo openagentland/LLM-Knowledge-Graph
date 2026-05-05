@@ -1,4 +1,4 @@
-import type { SourceType } from "./storage.js";
+import type { ArtifactKind, PartitionStatus, SourceType } from "./storage.js";
 
 export type SearchKnowledgeCommand = {
   query: string;
@@ -6,7 +6,12 @@ export type SearchKnowledgeCommand = {
 };
 
 export type SearchEvidence = {
+  artifactKind: ArtifactKind;
   evidenceId: string;
+  partitionId?: string;
+  partitionIndex?: number;
+  partitionStatus?: PartitionStatus;
+  partitionTotal?: number;
   path: string;
   provenance: {
     contentHash: string;

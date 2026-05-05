@@ -27,6 +27,8 @@ import type { FileScannerPort } from "../../application/ports/file-scanner-port.
 import type { IngestionPipelinePort } from "../../application/ports/ingestion-pipeline-port.js";
 import type { InternalGraphStorePort } from "../../application/ports/internal-graph-store-port.js";
 import type { LoggerPort } from "../../application/ports/logger-port.js";
+import type { OverlayBuilderPort } from "../../application/ports/overlay-builder-port.js";
+import type { OverlayStorePort } from "../../application/ports/overlay-store-port.js";
 import type { ParserPort } from "../../application/ports/parser-port.js";
 import type { StructuredAnalyzerRegistryPort } from "../../application/ports/structured-analyzer-registry-port.js";
 import type { StructuredDataProjectorPort } from "../../application/ports/structured-data-projector-port.js";
@@ -49,6 +51,8 @@ export class DefaultIngestionPipeline implements IngestionPipelinePort {
     private readonly canonicalFacts: CanonicalFactStorePort,
     private readonly derivedFacts: DerivedFactStorePort,
     private readonly internalGraph: InternalGraphStorePort,
+    private readonly overlayStore: OverlayStorePort,
+    private readonly overlayBuilder: OverlayBuilderPort,
     private readonly graphProjector: StructuredDataProjectorPort,
     private readonly logger: LoggerPort,
     private readonly context: {
@@ -73,6 +77,7 @@ export class DefaultIngestionPipeline implements IngestionPipelinePort {
       await this.canonicalFacts.clear();
       await this.derivedFacts.clear();
       await this.internalGraph.clear();
+      await this.overlayStore.clear();
     }
 
     const previousManifestEntries = await this.manifest.getAll();
@@ -157,7 +162,11 @@ export class DefaultIngestionPipeline implements IngestionPipelinePort {
             indexRunId: context.indexRunId,
             logger: this.logger,
           });
-          observations.push(...structuredObservations.map((record) => stripFileFingerprint(record)));
+          observations.push(
+            ...structuredObservations.map((record) =>
+              stripFileFingerprint(record),
+            ),
+          );
           const canonicalFacts = normalizeCanonicalFacts({
             activeProjectIdentity: this.context.activeProjectIdentity,
             document,
@@ -189,17 +198,22 @@ export class DefaultIngestionPipeline implements IngestionPipelinePort {
             documentPath: candidate.path,
             graphProjector: this.graphProjector,
             internalGraph: this.internalGraph,
+            logger: this.logger,
             canonicalFactStore: this.canonicalFacts,
             derivedFactStore: this.derivedFacts,
-            logger: this.logger,
+            overlayBuilder: this.overlayBuilder,
+            overlayStore: this.overlayStore,
             symbolCandidates,
           });
 
           await this.manifest.upsert({
+            artifactKind: candidate.artifactKind,
             chunkKeys: records.map((record) => record.chunkKey),
             fileFingerprint,
             indexRunId: context.indexRunId,
             lastIndexedAt: new Date().toISOString(),
+            latestPartitionStatus: derivePartitionStatus(document),
+            partitionCount: document.partitions?.length,
             path: candidate.path,
             sourceType: candidate.sourceType,
           });
@@ -328,6 +342,7 @@ function toPersistedRecords(options: {
   );
 
   return options.chunks.map((chunk) => ({
+    artifactKind: chunk.artifactKind,
     chunkKey: createHash("sha256")
       .update(
         [
@@ -345,11 +360,36 @@ function toPersistedRecords(options: {
     extractor: chunk.extractor,
     fileFingerprint: options.fileFingerprint,
     indexRunId: chunk.indexRunId,
+    partitionId: chunk.partitionId,
+    partitionIndex: chunk.partitionIndex,
+    partitionStatus: chunk.partitionStatus,
+    partitionTotal: chunk.partitionTotal,
     path: chunk.path,
     sourceType: chunk.sourceType,
     codeLocation: chunk.codeLocation,
     docLocation: chunk.docLocation,
   }));
+}
+
+function derivePartitionStatus(document: ParsedDocument) {
+  const statuses =
+    document.partitions?.map((partition) => partition.status) ?? [];
+  if (statuses.length === 0) {
+    return undefined;
+  }
+  if (statuses.includes("failed")) {
+    return "failed" as const;
+  }
+  if (statuses.includes("partial")) {
+    return "partial" as const;
+  }
+  if (statuses.includes("degraded")) {
+    return "degraded" as const;
+  }
+  if (statuses.includes("skipped")) {
+    return "skipped" as const;
+  }
+  return "complete" as const;
 }
 
 function extractSymbolCandidates(options: {
@@ -473,11 +513,14 @@ async function analyzeStructuredObservations(options: {
         });
       }
     } catch (error) {
-      options.logger.warn("Structured analyzer failed; continuing with text indexing", {
-        error: error instanceof Error ? error.message : String(error),
-        extractor: analyzer.constructor.name,
-        path: options.document.path,
-      });
+      options.logger.warn(
+        "Structured analyzer failed; continuing with text indexing",
+        {
+          error: error instanceof Error ? error.message : String(error),
+          extractor: analyzer.constructor.name,
+          path: options.document.path,
+        },
+      );
     }
   }
 
@@ -544,7 +587,10 @@ function normalizeCanonicalFacts(options: {
   }
 
   for (const observation of options.structuredObservations ?? []) {
-    if (observation.kind === "symbol_export" && observation.name !== undefined) {
+    if (
+      observation.kind === "symbol_export" &&
+      observation.name !== undefined
+    ) {
       facts.push({
         codeLocation: observation.codeLocation,
         confidence: observation.confidence,
@@ -577,7 +623,12 @@ function normalizeCanonicalFacts(options: {
         contentHash: observation.contentHash,
         evidenceId: observation.evidenceId,
         extractor: observation.extractor,
-        factId: hashStructuredId(options.activeProjectIdentity, options.document.path, "workflow", observation.name),
+        factId: hashStructuredId(
+          options.activeProjectIdentity,
+          options.document.path,
+          "workflow",
+          observation.name,
+        ),
         fileFingerprint: options.fileFingerprint,
         indexRunId: options.indexRunId,
         kind: "workflow",
@@ -589,13 +640,21 @@ function normalizeCanonicalFacts(options: {
       continue;
     }
 
-    if (observation.kind === "workflow_step" && observation.name !== undefined) {
+    if (
+      observation.kind === "workflow_step" &&
+      observation.name !== undefined
+    ) {
       facts.push({
         confidence: observation.confidence,
         contentHash: observation.contentHash,
         evidenceId: observation.evidenceId,
         extractor: observation.extractor,
-        factId: hashStructuredId(options.activeProjectIdentity, options.document.path, "workflow_step", observation.name),
+        factId: hashStructuredId(
+          options.activeProjectIdentity,
+          options.document.path,
+          "workflow_step",
+          observation.name,
+        ),
         fileFingerprint: options.fileFingerprint,
         indexRunId: options.indexRunId,
         kind: "workflow_step",
@@ -617,7 +676,12 @@ function normalizeCanonicalFacts(options: {
         contentHash: observation.contentHash,
         evidenceId: observation.evidenceId,
         extractor: observation.extractor,
-        factId: hashStructuredId(options.activeProjectIdentity, options.document.path, "quality_gate", observation.name),
+        factId: hashStructuredId(
+          options.activeProjectIdentity,
+          options.document.path,
+          "quality_gate",
+          observation.name,
+        ),
         fileFingerprint: options.fileFingerprint,
         indexRunId: options.indexRunId,
         kind: "quality_gate",
@@ -633,13 +697,21 @@ function normalizeCanonicalFacts(options: {
       continue;
     }
 
-    if (observation.kind === "config_artifact" && observation.name !== undefined) {
+    if (
+      observation.kind === "config_artifact" &&
+      observation.name !== undefined
+    ) {
       facts.push({
         confidence: observation.confidence,
         contentHash: observation.contentHash,
         evidenceId: observation.evidenceId,
         extractor: observation.extractor,
-        factId: hashStructuredId(options.activeProjectIdentity, options.document.path, "config_artifact", observation.name),
+        factId: hashStructuredId(
+          options.activeProjectIdentity,
+          options.document.path,
+          "config_artifact",
+          observation.name,
+        ),
         fileFingerprint: options.fileFingerprint,
         indexRunId: options.indexRunId,
         kind: "config_artifact",
@@ -660,7 +732,12 @@ function normalizeCanonicalFacts(options: {
         contentHash: observation.contentHash,
         evidenceId: observation.evidenceId,
         extractor: observation.extractor,
-        factId: hashStructuredId(options.activeProjectIdentity, options.document.path, "workspace_task", observation.name),
+        factId: hashStructuredId(
+          options.activeProjectIdentity,
+          options.document.path,
+          "workspace_task",
+          observation.name,
+        ),
         fileFingerprint: options.fileFingerprint,
         indexRunId: options.indexRunId,
         kind: "workspace_task",
@@ -679,10 +756,22 @@ function normalizeCanonicalFacts(options: {
   for (const item of options.document.imports ?? []) {
     facts.push({
       confidence: item.isPackage ? 0.95 : 0.9,
-      contentHash: options.symbolCandidates[0]?.contentHash ?? hashContent(options.document.content),
-      evidenceId: hashStructuredId(options.activeProjectIdentity, options.document.path, "file_import", item.specifier),
+      contentHash:
+        options.symbolCandidates[0]?.contentHash ??
+        hashContent(options.document.content),
+      evidenceId: hashStructuredId(
+        options.activeProjectIdentity,
+        options.document.path,
+        "file_import",
+        item.specifier,
+      ),
       extractor: "observation-normalizer",
-      factId: hashStructuredId(options.activeProjectIdentity, options.document.path, "file_import", item.specifier),
+      factId: hashStructuredId(
+        options.activeProjectIdentity,
+        options.document.path,
+        "file_import",
+        item.specifier,
+      ),
       fileFingerprint: options.fileFingerprint,
       indexRunId: options.indexRunId,
       kind: "file_import",
@@ -697,9 +786,19 @@ function normalizeCanonicalFacts(options: {
     facts.push({
       confidence: 1,
       contentHash: hashContent(`${dep.name}:${dep.version}`),
-      evidenceId: hashStructuredId(options.activeProjectIdentity, options.document.path, "package_dependency", dep.name),
+      evidenceId: hashStructuredId(
+        options.activeProjectIdentity,
+        options.document.path,
+        "package_dependency",
+        dep.name,
+      ),
       extractor: "observation-normalizer",
-      factId: hashStructuredId(options.activeProjectIdentity, options.document.path, "package_dependency", dep.name),
+      factId: hashStructuredId(
+        options.activeProjectIdentity,
+        options.document.path,
+        "package_dependency",
+        dep.name,
+      ),
       fileFingerprint: options.fileFingerprint,
       indexRunId: options.indexRunId,
       kind: "package_dependency",
@@ -718,15 +817,29 @@ function normalizeCanonicalFacts(options: {
     facts.push({
       confidence: 1,
       contentHash: hashContent(script.command),
-      evidenceId: hashStructuredId(options.activeProjectIdentity, options.document.path, "package_script", script.name),
+      evidenceId: hashStructuredId(
+        options.activeProjectIdentity,
+        options.document.path,
+        "package_script",
+        script.name,
+      ),
       extractor: "observation-normalizer",
-      factId: hashStructuredId(options.activeProjectIdentity, options.document.path, "package_script", script.name),
+      factId: hashStructuredId(
+        options.activeProjectIdentity,
+        options.document.path,
+        "package_script",
+        script.name,
+      ),
       fileFingerprint: options.fileFingerprint,
       indexRunId: options.indexRunId,
       kind: "package_script",
       layer: "canonical",
       path: options.document.path,
-      payload: { command: script.command, packageName: options.document.packageName, scriptName: script.name },
+      payload: {
+        command: script.command,
+        packageName: options.document.packageName,
+        scriptName: script.name,
+      },
       sourceType: options.document.sourceType,
     });
   }
@@ -735,15 +848,29 @@ function normalizeCanonicalFacts(options: {
     facts.push({
       confidence: 0.95,
       contentHash: hashContent(`${step.name}:${step.command ?? ""}`),
-      evidenceId: hashStructuredId(options.activeProjectIdentity, options.document.path, "workflow_step", step.name),
+      evidenceId: hashStructuredId(
+        options.activeProjectIdentity,
+        options.document.path,
+        "workflow_step",
+        step.name,
+      ),
       extractor: "observation-normalizer",
-      factId: hashStructuredId(options.activeProjectIdentity, options.document.path, "workflow_step", step.name),
+      factId: hashStructuredId(
+        options.activeProjectIdentity,
+        options.document.path,
+        "workflow_step",
+        step.name,
+      ),
       fileFingerprint: options.fileFingerprint,
       indexRunId: options.indexRunId,
       kind: "workflow_step",
       layer: "canonical",
       path: options.document.path,
-      payload: { command: step.command, scriptName: step.scriptName, stepName: step.name },
+      payload: {
+        command: step.command,
+        scriptName: step.scriptName,
+        stepName: step.name,
+      },
       sourceType: options.document.sourceType,
     });
   }
@@ -752,15 +879,29 @@ function normalizeCanonicalFacts(options: {
     facts.push({
       confidence: 0.95,
       contentHash: hashContent(`${gate.tool}:${gate.command}`),
-      evidenceId: hashStructuredId(options.activeProjectIdentity, options.document.path, "quality_gate", gate.command),
+      evidenceId: hashStructuredId(
+        options.activeProjectIdentity,
+        options.document.path,
+        "quality_gate",
+        gate.command,
+      ),
       extractor: "observation-normalizer",
-      factId: hashStructuredId(options.activeProjectIdentity, options.document.path, "quality_gate", gate.command),
+      factId: hashStructuredId(
+        options.activeProjectIdentity,
+        options.document.path,
+        "quality_gate",
+        gate.command,
+      ),
       fileFingerprint: options.fileFingerprint,
       indexRunId: options.indexRunId,
       kind: "quality_gate",
       layer: "canonical",
       path: options.document.path,
-      payload: { command: gate.command, scriptName: gate.scriptName, tool: gate.tool },
+      payload: {
+        command: gate.command,
+        scriptName: gate.scriptName,
+        tool: gate.tool,
+      },
       sourceType: options.document.sourceType,
     });
   }
@@ -779,50 +920,85 @@ function deriveFacts(options: {
   const symbolDefinitions = options.canonicalFacts.filter(
     (fact) => fact.kind === "symbol_definition",
   );
-  const fileImports = options.canonicalFacts.filter((fact) => fact.kind === "file_import");
+  const fileImports = options.canonicalFacts.filter(
+    (fact) => fact.kind === "file_import",
+  );
   const packageDependencies = options.canonicalFacts.filter(
     (fact) => fact.kind === "package_dependency",
   );
-  const packageScripts = options.canonicalFacts.filter((fact) => fact.kind === "package_script");
-  const workflowSteps = options.canonicalFacts.filter((fact) => fact.kind === "workflow_step");
-  const qualityGates = options.canonicalFacts.filter((fact) => fact.kind === "quality_gate");
-  const workflows = options.canonicalFacts.filter((fact) => fact.kind === "workflow");
-  const symbolExports = options.canonicalFacts.filter((fact) => fact.kind === "symbol_export");
-  const workspaceTasks = options.canonicalFacts.filter((fact) => fact.kind === "workspace_task");
+  const packageScripts = options.canonicalFacts.filter(
+    (fact) => fact.kind === "package_script",
+  );
+  const workflowSteps = options.canonicalFacts.filter(
+    (fact) => fact.kind === "workflow_step",
+  );
+  const qualityGates = options.canonicalFacts.filter(
+    (fact) => fact.kind === "quality_gate",
+  );
+  const workflows = options.canonicalFacts.filter(
+    (fact) => fact.kind === "workflow",
+  );
+  const symbolExports = options.canonicalFacts.filter(
+    (fact) => fact.kind === "symbol_export",
+  );
+  const workspaceTasks = options.canonicalFacts.filter(
+    (fact) => fact.kind === "workspace_task",
+  );
 
   for (const fact of symbolDefinitions) {
-    derived.push(createDerivedFact(fact, options.fileFingerprint, "symbol-defined-in-file", {
-      fromId: String(fact.payload.symbolCandidateId),
-      fromKind: "SymbolCandidate",
-      fromLabel: String(fact.payload.name),
-      toId: options.document.path,
-      toKind: "File",
-      toLabel: options.document.path,
-    }));
+    derived.push(
+      createDerivedFact(
+        fact,
+        options.fileFingerprint,
+        "symbol-defined-in-file",
+        {
+          fromId: String(fact.payload.symbolCandidateId),
+          fromKind: "SymbolCandidate",
+          fromLabel: String(fact.payload.name),
+          toId: options.document.path,
+          toKind: "File",
+          toLabel: options.document.path,
+        },
+      ),
+    );
   }
 
   for (const fact of symbolExports) {
-    derived.push(createDerivedFact(fact, options.fileFingerprint, "symbol-exported-from-file", {
-      fromId: String(fact.payload.exportedName),
-      fromKind: "Symbol",
-      fromLabel: String(fact.payload.exportedName),
-      toId: options.document.path,
-      toKind: "File",
-      toLabel: options.document.path,
-    }));
+    derived.push(
+      createDerivedFact(
+        fact,
+        options.fileFingerprint,
+        "symbol-exported-from-file",
+        {
+          fromId: String(fact.payload.exportedName),
+          fromKind: "Symbol",
+          fromLabel: String(fact.payload.exportedName),
+          toId: options.document.path,
+          toKind: "File",
+          toLabel: options.document.path,
+        },
+      ),
+    );
   }
 
   for (const fact of fileImports) {
     const specifier = String(fact.payload.specifier);
     const isPackage = Boolean(fact.payload.isPackage);
-    derived.push(createDerivedFact(fact, options.fileFingerprint, isPackage ? "file-imports-package" : "file-imports-file", {
-      fromId: options.document.path,
-      fromKind: "File",
-      fromLabel: options.document.path,
-      toId: specifier,
-      toKind: isPackage ? "Package" : "File",
-      toLabel: specifier,
-    }));
+    derived.push(
+      createDerivedFact(
+        fact,
+        options.fileFingerprint,
+        isPackage ? "file-imports-package" : "file-imports-file",
+        {
+          fromId: options.document.path,
+          fromKind: "File",
+          fromLabel: options.document.path,
+          toId: specifier,
+          toKind: isPackage ? "Package" : "File",
+          toLabel: specifier,
+        },
+      ),
+    );
   }
 
   for (const fact of packageDependencies) {
@@ -834,20 +1010,28 @@ function deriveFacts(options: {
       typeof fact.payload.dependencyName === "string"
         ? fact.payload.dependencyName
         : "unknown";
-    derived.push(createDerivedFact(fact, options.fileFingerprint, "package-depends-on-package", {
-      fromId: packageName,
-      fromKind: "Package",
-      fromLabel: packageName,
-      toId: dependencyName,
-      toKind: "Package",
-      toLabel: dependencyName,
-    }));
+    derived.push(
+      createDerivedFact(
+        fact,
+        options.fileFingerprint,
+        "package-depends-on-package",
+        {
+          fromId: packageName,
+          fromKind: "Package",
+          fromLabel: packageName,
+          toId: dependencyName,
+          toKind: "Package",
+          toLabel: dependencyName,
+        },
+      ),
+    );
   }
 
   for (const sourceSymbol of options.symbolCandidates) {
     const references = options.symbolCandidates.filter(
       (candidate) =>
-        candidate.path === sourceSymbol.path && candidate.evidenceId !== sourceSymbol.evidenceId,
+        candidate.path === sourceSymbol.path &&
+        candidate.evidenceId !== sourceSymbol.evidenceId,
     );
     for (const target of references) {
       derived.push({
@@ -911,103 +1095,154 @@ function deriveFacts(options: {
 
   for (const step of workflowSteps) {
     const workflowName = options.document.path;
-    derived.push(createDerivedFact(step, options.fileFingerprint, "workflow-contains-job", {
-      fromId: workflowName,
-      fromKind: "Workflow",
-      fromLabel: workflowName,
-      toId: String(step.payload.stepName),
-      toKind: "WorkflowJob",
-      toLabel: String(step.payload.stepName),
-    }));
-    derived.push(createDerivedFact(step, options.fileFingerprint, "job-runs-step", {
-      fromId: String(step.payload.stepName),
-      fromKind: "WorkflowJob",
-      fromLabel: String(step.payload.stepName),
-      toId: String(step.payload.stepName),
-      toKind: "WorkflowStep",
-      toLabel: String(step.payload.stepName),
-    }));
+    derived.push(
+      createDerivedFact(
+        step,
+        options.fileFingerprint,
+        "workflow-contains-job",
+        {
+          fromId: workflowName,
+          fromKind: "Workflow",
+          fromLabel: workflowName,
+          toId: String(step.payload.stepName),
+          toKind: "WorkflowJob",
+          toLabel: String(step.payload.stepName),
+        },
+      ),
+    );
+    derived.push(
+      createDerivedFact(step, options.fileFingerprint, "job-runs-step", {
+        fromId: String(step.payload.stepName),
+        fromKind: "WorkflowJob",
+        fromLabel: String(step.payload.stepName),
+        toId: String(step.payload.stepName),
+        toKind: "WorkflowStep",
+        toLabel: String(step.payload.stepName),
+      }),
+    );
   }
 
   for (const step of workflowSteps) {
     const scriptName = step.payload.scriptName;
     if (typeof scriptName === "string") {
-      derived.push(createDerivedFact(step, options.fileFingerprint, "workflow-runs-package-script-candidate", {
-        fromId: String(step.payload.stepName),
-        fromKind: "WorkflowStep",
-        fromLabel: String(step.payload.stepName),
-        toId: scriptName,
-        toKind: "PackageScript",
-        toLabel: scriptName,
-      }));
+      derived.push(
+        createDerivedFact(
+          step,
+          options.fileFingerprint,
+          "workflow-runs-package-script-candidate",
+          {
+            fromId: String(step.payload.stepName),
+            fromKind: "WorkflowStep",
+            fromLabel: String(step.payload.stepName),
+            toId: scriptName,
+            toKind: "PackageScript",
+            toLabel: scriptName,
+          },
+        ),
+      );
     }
   }
 
   for (const workflow of workflows) {
     const hasWorkflowJob = derived.some(
       (fact) =>
-        fact.kind === "workflow-contains-job" && fact.payload.fromId === workflow.payload.workflowName,
+        fact.kind === "workflow-contains-job" &&
+        fact.payload.fromId === workflow.payload.workflowName,
     );
     if (!hasWorkflowJob) {
-      derived.push(createDerivedFact(workflow, options.fileFingerprint, "workflow-contains-job", {
-        fromId: String(workflow.payload.workflowName),
-        fromKind: "Workflow",
-        fromLabel: String(workflow.payload.workflowName),
-        toId: String(workflow.payload.workflowName),
-        toKind: "WorkflowJob",
-        toLabel: String(workflow.payload.workflowName),
-      }));
+      derived.push(
+        createDerivedFact(
+          workflow,
+          options.fileFingerprint,
+          "workflow-contains-job",
+          {
+            fromId: String(workflow.payload.workflowName),
+            fromKind: "Workflow",
+            fromLabel: String(workflow.payload.workflowName),
+            toId: String(workflow.payload.workflowName),
+            toKind: "WorkflowJob",
+            toLabel: String(workflow.payload.workflowName),
+          },
+        ),
+      );
     }
   }
 
   for (const task of workspaceTasks) {
-    const command = typeof task.payload.command === "string" ? task.payload.command : undefined;
+    const command =
+      typeof task.payload.command === "string"
+        ? task.payload.command
+        : undefined;
     if (command !== undefined) {
-      derived.push(createDerivedFact(task, options.fileFingerprint, "task-runs-command", {
-        fromId: String(task.payload.taskName),
-        fromKind: "Task",
-        fromLabel: String(task.payload.taskName),
-        toId: command,
-        toKind: "Command",
-        toLabel: command,
-      }));
+      derived.push(
+        createDerivedFact(task, options.fileFingerprint, "task-runs-command", {
+          fromId: String(task.payload.taskName),
+          fromKind: "Task",
+          fromLabel: String(task.payload.taskName),
+          toId: command,
+          toKind: "Command",
+          toLabel: command,
+        }),
+      );
     }
   }
 
   for (const gate of qualityGates) {
-    derived.push(createDerivedFact(gate, options.fileFingerprint, "quality-gate-runs-command", {
-      fromId: String(gate.payload.tool),
-      fromKind: "QualityGate",
-      fromLabel: String(gate.payload.tool),
-      toId: String(gate.payload.command),
-      toKind: "Command",
-      toLabel: String(gate.payload.command),
-    }));
+    derived.push(
+      createDerivedFact(
+        gate,
+        options.fileFingerprint,
+        "quality-gate-runs-command",
+        {
+          fromId: String(gate.payload.tool),
+          fromKind: "QualityGate",
+          fromLabel: String(gate.payload.tool),
+          toId: String(gate.payload.command),
+          toKind: "Command",
+          toLabel: String(gate.payload.command),
+        },
+      ),
+    );
 
     if (typeof gate.payload.scriptName === "string") {
-      derived.push(createDerivedFact(gate, options.fileFingerprint, "quality-gate-runs-script-candidate", {
-        fromId: String(gate.payload.tool),
-        fromKind: "QualityGate",
-        fromLabel: String(gate.payload.tool),
-        toId: String(gate.payload.scriptName),
-        toKind: "PackageScript",
-        toLabel: String(gate.payload.scriptName),
-      }));
+      derived.push(
+        createDerivedFact(
+          gate,
+          options.fileFingerprint,
+          "quality-gate-runs-script-candidate",
+          {
+            fromId: String(gate.payload.tool),
+            fromKind: "QualityGate",
+            fromLabel: String(gate.payload.tool),
+            toId: String(gate.payload.scriptName),
+            toKind: "PackageScript",
+            toLabel: String(gate.payload.scriptName),
+          },
+        ),
+      );
     }
   }
 
   for (const script of packageScripts) {
-    const calledScript = String(script.payload.command)
-      .match(/npm\s+run\s+([\w:-]+)/u)?.[1];
+    const calledScript = String(script.payload.command).match(
+      /npm\s+run\s+([\w:-]+)/u,
+    )?.[1];
     if (calledScript !== undefined) {
-      derived.push(createDerivedFact(script, options.fileFingerprint, "quality-gate-runs-script-candidate", {
-        fromId: String(script.payload.scriptName),
-        fromKind: "PackageScript",
-        fromLabel: String(script.payload.scriptName),
-        toId: calledScript,
-        toKind: "PackageScript",
-        toLabel: calledScript,
-      }));
+      derived.push(
+        createDerivedFact(
+          script,
+          options.fileFingerprint,
+          "quality-gate-runs-script-candidate",
+          {
+            fromId: String(script.payload.scriptName),
+            fromKind: "PackageScript",
+            fromLabel: String(script.payload.scriptName),
+            toId: calledScript,
+            toKind: "PackageScript",
+            toLabel: calledScript,
+          },
+        ),
+      );
     }
   }
 
@@ -1023,33 +1258,76 @@ async function persistStructuredData(options: {
   internalGraph: InternalGraphStorePort;
   logger: LoggerPort;
   canonicalFactStore: CanonicalFactStorePort;
+  overlayBuilder: OverlayBuilderPort;
+  overlayStore: OverlayStorePort;
   symbolCandidates: PersistedSymbolCandidateRecord[];
 }): Promise<void> {
   try {
     await options.canonicalFactStore.upsert(options.canonicalFacts);
     await options.derivedFactStore.upsert(options.derivedFacts);
-    const existingGraph = await options.internalGraph.read();
+    const [existingGraph, existingOverlays] = await Promise.all([
+      options.internalGraph.read(),
+      options.overlayStore.read(),
+    ]);
     const projected = options.graphProjector.project({
       canonicalFacts: options.canonicalFacts,
       derivedFacts: options.derivedFacts,
       symbolCandidates: options.symbolCandidates,
     });
-    await options.internalGraph.replace({
-      edges: [
-        ...existingGraph.edges.filter((edge) => edge.path !== options.documentPath),
-        ...projected.edges,
-      ].sort((left, right) => left.edgeId.localeCompare(right.edgeId)),
-      nodes: [
-        ...existingGraph.nodes.filter((node) => node.path !== options.documentPath),
-        ...projected.nodes,
-      ].sort((left, right) => left.nodeId.localeCompare(right.nodeId)),
+    const overlayRecords = await options.overlayBuilder.build({
+      derivedFacts: options.derivedFacts,
     });
+    const overlayByKind = new Map(
+      existingOverlays.records.map((record) => [record.kind, record]),
+    );
+    for (const record of overlayRecords) {
+      const existingRecord = overlayByKind.get(record.kind);
+      overlayByKind.set(record.kind, {
+        ...record,
+        edges: [
+          ...(existingRecord?.edges.filter(
+            (edge) => edge.path !== options.documentPath,
+          ) ?? []),
+          ...record.edges,
+        ].sort((left, right) => left.id.localeCompare(right.id)),
+        nodes: [
+          ...(existingRecord?.nodes.filter(
+            (node) => node.path !== options.documentPath,
+          ) ?? []),
+          ...record.nodes,
+        ].sort((left, right) => left.id.localeCompare(right.id)),
+      });
+    }
+    await Promise.all([
+      options.internalGraph.replace({
+        edges: [
+          ...existingGraph.edges.filter(
+            (edge) => edge.path !== options.documentPath,
+          ),
+          ...projected.edges,
+        ].sort((left, right) => left.edgeId.localeCompare(right.edgeId)),
+        nodes: [
+          ...existingGraph.nodes.filter(
+            (node) => node.path !== options.documentPath,
+          ),
+          ...projected.nodes,
+        ].sort((left, right) => left.nodeId.localeCompare(right.nodeId)),
+      }),
+      options.overlayStore.replace({
+        records: Array.from(overlayByKind.values()).sort((left, right) =>
+          left.kind.localeCompare(right.kind),
+        ),
+      }),
+    ]);
   } catch (error) {
-    options.logger.warn("Structured persistence failed; continuing text indexing", {
-      error: error instanceof Error ? error.message : String(error),
-      event: "index.structured_persistence_failed",
-      path: options.documentPath,
-    });
+    options.logger.warn(
+      "Structured persistence failed; continuing text indexing",
+      {
+        error: error instanceof Error ? error.message : String(error),
+        event: "index.structured_persistence_failed",
+        path: options.documentPath,
+      },
+    );
   }
 }
 
@@ -1079,9 +1357,9 @@ function createDerivedFact(
 function dedupeCanonicalFacts(
   facts: PersistedCanonicalFactRecord[],
 ): PersistedCanonicalFactRecord[] {
-  return Array.from(new Map(facts.map((fact) => [fact.factId, fact])).values()).sort(
-    (left, right) => left.factId.localeCompare(right.factId),
-  );
+  return Array.from(
+    new Map(facts.map((fact) => [fact.factId, fact])).values(),
+  ).sort((left, right) => left.factId.localeCompare(right.factId));
 }
 
 function dedupeDerivedFacts(
@@ -1089,7 +1367,9 @@ function dedupeDerivedFacts(
 ): PersistedDerivedFactRecord[] {
   return Array.from(
     new Map(facts.map((fact) => [fact.derivedFactId, fact])).values(),
-  ).sort((left, right) => left.derivedFactId.localeCompare(right.derivedFactId));
+  ).sort((left, right) =>
+    left.derivedFactId.localeCompare(right.derivedFactId),
+  );
 }
 
 function hashContent(content: string): string {

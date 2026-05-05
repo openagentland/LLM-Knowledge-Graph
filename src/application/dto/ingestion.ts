@@ -3,6 +3,24 @@ import type { CodeLocation, SourceType } from "../../domain/index.js";
 
 export type { CodeLocation, SourceType };
 
+export type ArtifactKind =
+  | "code"
+  | "config"
+  | "doc"
+  | "generated"
+  | "lockfile"
+  | "schema"
+  | "script"
+  | "test"
+  | "workflow";
+
+export type PartitionStatus =
+  | "complete"
+  | "degraded"
+  | "failed"
+  | "partial"
+  | "skipped";
+
 export type ScanSkipReason =
   | "ignored"
   | "binary"
@@ -12,6 +30,7 @@ export type ScanSkipReason =
 
 export type ScanCandidate = {
   absolutePath: string;
+  artifactKind: ArtifactKind;
   path: string;
   sizeBytes: number;
   sourceType: SourceType;
@@ -30,6 +49,15 @@ export type ScanResult = {
 export type DocLocation = {
   offset?: number;
   section?: string;
+};
+
+export type DocumentPartition = {
+  content: string;
+  index: number;
+  location?: CodeLocation | DocLocation;
+  partitionId: string;
+  status: PartitionStatus;
+  total: number;
 };
 
 export type StructuralCodeBlock = {
@@ -86,12 +114,14 @@ export type ChunkingOptions = {
 };
 
 export type ParsedDocument = {
+  artifactKind: ArtifactKind;
   content: string;
   imports?: FileImportObservation[];
   language: string | null;
   packageDependencies?: PackageDependencyObservation[];
   packageName?: string;
   packageScripts?: PackageScriptObservation[];
+  partitions?: DocumentPartition[];
   path: string;
   qualityGates?: QualityGateObservation[];
   sourceType: SourceType;
@@ -101,10 +131,15 @@ export type ParsedDocument = {
 };
 
 export type ChunkProvenance = {
+  artifactKind: ArtifactKind;
   contentHash: string;
   evidenceId: string;
   extractor: string;
   indexRunId: string;
+  partitionId?: string;
+  partitionIndex?: number;
+  partitionStatus?: PartitionStatus;
+  partitionTotal?: number;
   path: string;
   sourceType: SourceType;
 };

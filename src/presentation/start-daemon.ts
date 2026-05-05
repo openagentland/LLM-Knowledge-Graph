@@ -10,6 +10,7 @@ import type {
   DaemonResponse,
 } from "../application/dto/daemon.js";
 import type { LoggerPort } from "../application/ports/logger-port.js";
+import { FileDaemonRegistry } from "../infrastructure/daemon/file-daemon-registry.js";
 import { composeDaemonHandler, composeMainLogger } from "../main.js";
 import { ERROR_CODES, LkgError } from "../shared/errors/lkg-error.js";
 
@@ -34,23 +35,26 @@ export async function startDaemon(): Promise<void> {
   }
 
   const cwd = process.cwd();
-  const { logger } = composeMainLogger({ cwd });
+  const { config, logger } = composeMainLogger({ cwd });
   const handler = composeDaemonHandler({ cwd, logger });
 
   await startDaemonServer({
+    activeProjectIdentity: config.activeProjectIdentity,
     handler,
+    homeDir: config.homeDir,
     logger,
     socketPath,
   });
 }
 
 export async function startDaemonServer(options: {
+  activeProjectIdentity?: string;
   handler: DaemonRequestHandler;
+  homeDir?: string;
   logger: LoggerPort;
   socketPath: string;
 }): Promise<void> {
   await mkdir(dirname(options.socketPath), { recursive: true });
-  await rm(options.socketPath, { force: true });
 
   const server = createServer((socket) => {
     socket.setEncoding("utf8");
@@ -73,6 +77,8 @@ export async function startDaemonServer(options: {
     });
   });
 
+  const cleanupRuntimeArtifacts = createRuntimeArtifactCleanup(options);
+
   await new Promise<void>((resolvePromise, reject) => {
     server.once("error", reject);
     server.listen(options.socketPath, () => {
@@ -91,6 +97,7 @@ export async function startDaemonServer(options: {
     healthCheck.type !== "health.check" ||
     healthCheck.runtimeState !== "ready"
   ) {
+    await cleanupRuntimeArtifacts();
     throw new Error(
       "LKG daemon failed its readiness check after binding the socket.",
     );
@@ -109,7 +116,7 @@ export async function startDaemonServer(options: {
     });
     server.close();
     await options.handler.close();
-    await rm(options.socketPath, { force: true });
+    await cleanupRuntimeArtifacts();
     process.exit(0);
   };
 
@@ -131,11 +138,12 @@ async function handleLine(
       response,
     });
   } catch (error) {
-    logger.error("Failed daemon request", {
-      error: error instanceof Error ? error.message : String(error),
-      event: "daemon.request_failed",
-    });
     if (error instanceof LkgError) {
+      logger.info("Daemon request returned structured error", {
+        code: error.code,
+        error: error.message,
+        event: "daemon.request_rejected",
+      });
       writeResponse(socket, {
         error: {
           code: error.code,
@@ -147,6 +155,11 @@ async function handleLine(
       return;
     }
 
+    logger.error("Failed daemon request", {
+      error: error instanceof Error ? error.message : String(error),
+      event: "daemon.request_failed",
+    });
+
     writeResponse(socket, {
       error: {
         code: ERROR_CODES.INTERNAL_ERROR,
@@ -156,6 +169,29 @@ async function handleLine(
       ok: false,
     });
   }
+}
+
+function createRuntimeArtifactCleanup(options: {
+  activeProjectIdentity?: string;
+  homeDir?: string;
+  logger: LoggerPort;
+  socketPath: string;
+}): () => Promise<void> {
+  const registry =
+    options.homeDir === undefined || options.activeProjectIdentity === undefined
+      ? null
+      : new FileDaemonRegistry({ homeDir: options.homeDir });
+
+  return async () => {
+    if (registry !== null && options.activeProjectIdentity !== undefined) {
+      const registration = await registry.read(options.activeProjectIdentity);
+      if (registration?.socketPath === options.socketPath) {
+        await registry.delete(options.activeProjectIdentity);
+      }
+    }
+
+    await rm(options.socketPath, { force: true });
+  };
 }
 
 function writeResponse(

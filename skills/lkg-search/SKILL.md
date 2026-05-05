@@ -36,7 +36,9 @@ Search indexed project knowledge and return ranked evidence with provenance.
    - primary location:
      - `path:start_line-end_line` for code when line data is present
      - `path` plus `section` or `offset` for docs when present
+   - `Artifact kind: <artifact_kind>`
    - `Source type: <source_type>`
+   - `Partition: <partition_id> (#<partition_index+1>/<partition_total>, <partition_status>)` when present
    - `Score: <score>` if present
    - `Provenance: index_run_id=<...>, extractor=<...>, content_hash=<...>`
    - `Snippet: <snippet>`
@@ -47,7 +49,12 @@ Search indexed project knowledge and return ranked evidence with provenance.
 ## Outputs
 
 - `results[]` with:
+  - `artifact_kind`
   - `evidence_id`
+  - `partition_id` (if present)
+  - `partition_index` (if present)
+  - `partition_status` (if present)
+  - `partition_total` (if present)
   - `path`
   - `provenance`
     - `index_run_id`

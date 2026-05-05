@@ -22,6 +22,7 @@ function createRecord(
     >,
 ): PersistedChunkRecord {
   return {
+    artifactKind: overrides.artifactKind ?? "code",
     chunkKey: overrides.chunkKey,
     content: overrides.content,
     contentHash: overrides.contentHash ?? `${overrides.chunkKey}-hash`,

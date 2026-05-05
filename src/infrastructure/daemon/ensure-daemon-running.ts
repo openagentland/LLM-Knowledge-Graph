@@ -13,7 +13,6 @@ import type { LoggerPort } from "../../application/ports/logger-port.js";
 import { ERROR_CODES, LkgError } from "../../shared/errors/lkg-error.js";
 import type { LkgConfig } from "../config/load-config.js";
 
-const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_POLL_INTERVAL_MS = 50;
 
 export async function ensureDaemonRunning(options: {
@@ -31,29 +30,55 @@ export async function ensureDaemonRunning(options: {
   const existing = await registry.read(options.config.activeProjectIdentity);
   const pathExists = options.pathExists ?? exists;
 
-  if (
-    existing &&
-    existing.configFingerprint === options.config.configFingerprint &&
-    existing.socketPath === socketPath &&
-    (await pathExists(socketPath))
-  ) {
-    const daemonClient = new SocketDaemonClient({ socketPath });
-    if (await daemonClient.isHealthy()) {
-      options.logger.info("Reused healthy LKG daemon", {
-        activeProjectIdentity: options.config.activeProjectIdentity,
-        event: "daemon.reused",
-        pid: existing.pid,
-        socketPath,
-      });
-      return { socketPath };
-    }
+  if (existing) {
+    const existingSocketExists = await pathExists(existing.socketPath);
+    const matchesCurrentSocket = existing.socketPath === socketPath;
+    const matchesCurrentFingerprint =
+      existing.configFingerprint === options.config.configFingerprint;
 
-    await removeStaleDaemonState({
-      activeProjectIdentity: options.config.activeProjectIdentity,
-      logger: options.logger,
-      registry,
-      socketPath,
-    });
+    if (
+      matchesCurrentFingerprint &&
+      matchesCurrentSocket &&
+      existingSocketExists
+    ) {
+      const daemonClient = new SocketDaemonClient({ socketPath });
+      if (await daemonClient.isHealthy()) {
+        options.logger.info("Reused healthy LKG daemon", {
+          activeProjectIdentity: options.config.activeProjectIdentity,
+          event: "daemon.reused",
+          pid: existing.pid,
+          socketPath,
+        });
+        return { socketPath };
+      }
+
+      await recoverStaleDaemon({
+        activeProjectIdentity: options.config.activeProjectIdentity,
+        allowProcessTermination: true,
+        logger: options.logger,
+        reason: "unhealthy_existing_registration",
+        registration: existing,
+        registry,
+        socketPath: existing.socketPath,
+      });
+    } else {
+      await recoverStaleDaemon({
+        activeProjectIdentity: options.config.activeProjectIdentity,
+        allowProcessTermination:
+          matchesCurrentSocket &&
+          matchesCurrentFingerprint &&
+          !existingSocketExists,
+        logger: options.logger,
+        reason: classifyExistingDaemonMismatch({
+          existingSocketExists,
+          matchesCurrentFingerprint,
+          matchesCurrentSocket,
+        }),
+        registration: existing,
+        registry,
+        socketPath: existing.socketPath,
+      });
+    }
   }
 
   return startDaemonAndWait({
@@ -62,7 +87,8 @@ export async function ensureDaemonRunning(options: {
     logger: options.logger,
     registry,
     socketPath,
-    startupTimeoutMs: options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
+    startupTimeoutMs:
+      options.startupTimeoutMs ?? options.config.daemonStartupTimeoutMs,
     pollIntervalMs: options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
   });
 }
@@ -128,9 +154,12 @@ async function startDaemonAndWait(options: {
     await wait(options.pollIntervalMs);
   }
 
-  await removeStaleDaemonState({
+  await recoverStaleDaemon({
     activeProjectIdentity: options.config.activeProjectIdentity,
+    allowProcessTermination: true,
     logger: options.logger,
+    reason: "startup_timeout",
+    registration,
     registry: options.registry,
     socketPath: options.socketPath,
   });
@@ -145,19 +174,121 @@ async function startDaemonAndWait(options: {
   );
 }
 
-async function removeStaleDaemonState(options: {
+async function recoverStaleDaemon(options: {
   activeProjectIdentity: string;
+  allowProcessTermination: boolean;
   logger: LoggerPort;
+  reason: string;
+  registration: DaemonRegistration | null;
   registry: FileDaemonRegistry;
   socketPath: string;
 }): Promise<void> {
+  const terminatedPid = terminateDaemonProcess({
+    activeProjectIdentity: options.activeProjectIdentity,
+    allowProcessTermination: options.allowProcessTermination,
+    logger: options.logger,
+    pid: options.registration?.pid,
+    reason: options.reason,
+  });
+
+  await removeStaleDaemonState({
+    activeProjectIdentity: options.activeProjectIdentity,
+    logger: options.logger,
+    reason: options.reason,
+    registry: options.registry,
+    socketPath: options.socketPath,
+    terminatedPid,
+  });
+}
+
+function terminateDaemonProcess(options: {
+  activeProjectIdentity: string;
+  allowProcessTermination: boolean;
+  logger: LoggerPort;
+  pid: number | undefined;
+  reason: string;
+}): number | null {
+  if (options.pid === undefined || options.pid <= 0) {
+    return null;
+  }
+
+  if (!options.allowProcessTermination) {
+    options.logger.info(
+      "Skipped daemon process termination for unverified registration",
+      {
+        activeProjectIdentity: options.activeProjectIdentity,
+        event: "daemon.process_termination_skipped",
+        pid: options.pid,
+        reason: options.reason,
+      },
+    );
+    return null;
+  }
+
+  try {
+    process.kill(options.pid, "SIGTERM");
+    options.logger.warn("Terminated stale LKG daemon process", {
+      activeProjectIdentity: options.activeProjectIdentity,
+      event: "daemon.process_terminated",
+      pid: options.pid,
+      reason: options.reason,
+    });
+    return options.pid;
+  } catch (error) {
+    options.logger.warn("Failed to terminate stale LKG daemon process", {
+      activeProjectIdentity: options.activeProjectIdentity,
+      error: error instanceof Error ? error.message : String(error),
+      event: "daemon.process_termination_failed",
+      pid: options.pid,
+      reason: options.reason,
+    });
+    return null;
+  }
+}
+
+async function removeStaleDaemonState(options: {
+  activeProjectIdentity: string;
+  logger: LoggerPort;
+  reason: string;
+  registry: FileDaemonRegistry;
+  socketPath: string;
+  terminatedPid: number | null;
+}): Promise<void> {
   await options.registry.delete(options.activeProjectIdentity);
   await safeRm(options.socketPath);
-  options.logger.warn("Removed stale LKG daemon state", {
+  const logMethod =
+    options.reason === "missing_socket" ||
+    options.reason === "socket_path_changed" ||
+    options.reason === "config_changed"
+      ? options.logger.info.bind(options.logger)
+      : options.logger.warn.bind(options.logger);
+  logMethod("Removed stale LKG daemon state", {
     activeProjectIdentity: options.activeProjectIdentity,
     event: "daemon.stale_recovered",
+    pid: options.terminatedPid,
+    reason: options.reason,
     socketPath: options.socketPath,
   });
+}
+
+function classifyExistingDaemonMismatch(options: {
+  existingSocketExists: boolean;
+  matchesCurrentFingerprint: boolean;
+  matchesCurrentSocket: boolean;
+}): string {
+  if (!options.matchesCurrentFingerprint) {
+    return "config_changed";
+  }
+
+  if (!options.matchesCurrentSocket) {
+    return "socket_path_changed";
+  }
+
+  if (!options.existingSocketExists) {
+    return "missing_socket";
+  }
+
+  return "stale_existing_registration";
 }
 
 function resolveDaemonCommand(): { args: string[]; command: string } {

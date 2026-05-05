@@ -9,6 +9,10 @@ This directory contains reusable custom skills that map 1:1 to the runtime LKG M
 - `lkg-search/SKILL.md` — search indexed project knowledge and return ranked evidence with provenance.
 - `lkg-symbols/SKILL.md` — list symbol candidates using the currently implemented filters and evidence shape.
 - `lkg-symbol/SKILL.md` — return candidate-first symbol detail for a symbol in a path.
+- `lkg-entrypoints/SKILL.md` — list evidence-backed entrypoint candidates for the active project scope.
+- `lkg-flow/SKILL.md` — trace bounded evidence-backed flow segments from an anchor.
+- `lkg-impact/SKILL.md` — analyze bounded evidence-backed impact from a target anchor.
+- `lkg-slice/SKILL.md` — return a bounded evidence slice around a criterion anchor.
 
 ## Rules
 

@@ -160,6 +160,7 @@ export class LanceDbVectorStore implements VectorStorePort {
 
 function toPersistedChunkRow(record: PersistedChunkRecord): PersistedChunkRow {
   return {
+    artifactKind: record.artifactKind,
     chunkKey: record.chunkKey,
     content: record.content,
     contentHash: record.contentHash,
@@ -168,6 +169,10 @@ function toPersistedChunkRow(record: PersistedChunkRecord): PersistedChunkRow {
     extractor: record.extractor,
     fileFingerprint: record.fileFingerprint,
     indexRunId: record.indexRunId,
+    partitionId: record.partitionId,
+    partitionIndex: record.partitionIndex,
+    partitionStatus: record.partitionStatus,
+    partitionTotal: record.partitionTotal,
     path: record.path,
     sourceType: record.sourceType,
     codeEndLine: record.codeLocation?.endLine ?? 0,
@@ -181,6 +186,7 @@ function toPersistedChunkRow(record: PersistedChunkRecord): PersistedChunkRow {
 
 function toPersistedChunkRecord(row: PersistedChunkRow): PersistedChunkRecord {
   return {
+    artifactKind: row.artifactKind,
     chunkKey: row.chunkKey,
     content: row.content,
     contentHash: row.contentHash,
@@ -189,6 +195,10 @@ function toPersistedChunkRecord(row: PersistedChunkRow): PersistedChunkRecord {
     extractor: row.extractor,
     fileFingerprint: row.fileFingerprint,
     indexRunId: row.indexRunId,
+    partitionId: row.partitionId,
+    partitionIndex: row.partitionIndex,
+    partitionStatus: row.partitionStatus,
+    partitionTotal: row.partitionTotal,
     path: row.path,
     sourceType: row.sourceType,
     codeLocation: row.hasCodeLocation

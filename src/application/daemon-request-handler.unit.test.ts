@@ -84,6 +84,8 @@ function createInternalGraphStore(): InternalGraphStorePort {
     clear: vi.fn(),
     deleteByPath: vi.fn(),
     listByPath: vi.fn().mockResolvedValue({ edges: [], nodes: [] }),
+    listEdgesByNode: vi.fn().mockResolvedValue([]),
+    listNodesByPath: vi.fn().mockResolvedValue([]),
     read: vi.fn().mockResolvedValue({ edges: [], nodes: [] }),
     replace: vi.fn(),
   };
@@ -292,7 +294,453 @@ describe("createDaemonRequestHandler", () => {
     expect(response.type).toBe("search.query");
   });
 
-  it("routes symbols.query to the symbol candidate store", async () => {
+  it("passes Milestone 4.1 analysis commands through without presenter-specific transforms", async () => {
+    const readyStatus = {
+      activeProjectIdentity: "project-a",
+      counters: { errors: 0, filesIndexed: 1, filesTotal: 1 },
+      indexRunId: "run-4",
+      indexScope: "shared" as const,
+      lastError: null,
+      lastIndexedAt: "2026-05-03T00:00:00.000Z",
+      needsReindex: false,
+      pendingChanges: false,
+      state: "idle" as const,
+      watcherState: "enabled" as const,
+    } satisfies StatusSnapshot;
+    const indexStatePort = createIndexStatePort({
+      getStatus: vi.fn().mockResolvedValue(readyStatus),
+    });
+
+    const canonicalFactStore = createCanonicalFactStore();
+    const canonicalFactList = vi.fn().mockResolvedValue([
+      {
+        confidence: 0.95,
+        contentHash: "hash-1",
+        evidenceId: "evidence-1",
+        extractor: "artifact:repo-config",
+        factId: "fact-1",
+        fileFingerprint: "fp-1",
+        indexRunId: "run-4",
+        kind: "package_script",
+        layer: "canonical",
+        path: "package.json",
+        payload: { command: "node dist/main.js", scriptName: "start" },
+        sourceType: "code",
+      },
+    ]);
+    canonicalFactStore.list = canonicalFactList;
+
+    const derivedFactStore = createDerivedFactStore();
+    const derivedFactList = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          confidence: 0.82,
+          contentHash: "hash-entrypoint",
+          derivedFactId: "derived-entrypoint",
+          evidenceId: "evidence-entrypoint",
+          extractor: "derived-fact",
+          fileFingerprint: "fp-1",
+          indexRunId: "run-4",
+          kind: "script-references-symbol-candidate",
+          layer: "derived",
+          path: "package.json",
+          payload: {
+            fromId: "task:start",
+            fromKind: "task",
+            fromLabel: "start",
+            toId: "symbol-main",
+            toKind: "symbol",
+            toLabel: "main",
+          },
+          sourceType: "code",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          confidence: 0.8,
+          contentHash: "hash-flow",
+          derivedFactId: "derived-flow",
+          evidenceId: "evidence-flow",
+          extractor: "derived-fact",
+          fileFingerprint: "fp-1",
+          indexRunId: "run-4",
+          kind: "caller-callee-candidate",
+          layer: "derived",
+          path: "src/main.ts",
+          payload: {
+            fromId: "symbol-main",
+            fromKind: "symbol",
+            fromLabel: "main",
+            toId: "symbol-helper",
+            toKind: "symbol",
+            toLabel: "helper",
+          },
+          sourceType: "code",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          confidence: 0.7,
+          contentHash: "hash-impact",
+          derivedFactId: "derived-impact",
+          evidenceId: "evidence-impact",
+          extractor: "derived-fact",
+          fileFingerprint: "fp-1",
+          indexRunId: "run-4",
+          kind: "caller-callee-candidate",
+          layer: "derived",
+          path: "src/main.ts",
+          payload: {
+            fromId: "symbol-main",
+            fromKind: "symbol",
+            fromLabel: "main",
+            toId: "symbol-leaf",
+            toKind: "symbol",
+            toLabel: "leaf",
+          },
+          sourceType: "code",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          confidence: 0.6,
+          contentHash: "hash-slice",
+          derivedFactId: "derived-slice",
+          evidenceId: "evidence-slice",
+          extractor: "derived-fact",
+          fileFingerprint: "fp-1",
+          indexRunId: "run-4",
+          kind: "caller-callee-candidate",
+          layer: "derived",
+          path: "src/main.ts",
+          payload: {
+            fromId: "symbol-main",
+            fromKind: "symbol",
+            fromLabel: "main",
+            toId: "symbol-child",
+            toKind: "symbol",
+            toLabel: "child",
+          },
+          sourceType: "code",
+        },
+      ]);
+    derivedFactStore.list = derivedFactList;
+
+    const internalGraphStore = createInternalGraphStore();
+    const listEdgesByNode = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          edgeId: "edge-1",
+          fromNodeId: "symbol-main",
+          kind: "calls",
+          toNodeId: "symbol-helper",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    internalGraphStore.listEdgesByNode = listEdgesByNode;
+
+    const symbolCandidateStore = createSymbolCandidateStore();
+    const symbolCandidateList = vi.fn().mockResolvedValue([
+      {
+        codeLocation: { endLine: 3, startLine: 1 },
+        confidence: 0.91,
+        contentHash: "hash-main",
+        evidenceId: "symbol-main",
+        extractor: "ast-grep:function_declaration",
+        fileFingerprint: "fp-main",
+        indexRunId: "run-4",
+        kind: "function_declaration",
+        language: "ts",
+        name: "main",
+        path: "src/main.ts",
+        scope: "file",
+        signature: "function main()",
+        sourceType: "code",
+      },
+    ]);
+    symbolCandidateStore.list = symbolCandidateList;
+
+    const handler = createDaemonRequestHandler({
+      canonicalFactStore,
+      derivedFactStore,
+      embedding: { embedChunks: vi.fn(), embedQuery: vi.fn() },
+      indexStatePort,
+      ingestionPipeline: { run: vi.fn() },
+      internalGraphStore,
+      logger: createLogger(),
+      retriever: { retrieve: vi.fn() },
+      statusContext: createStatusContext(),
+      symbolCandidateStore,
+    });
+
+    const entrypointCommand = {
+      confidenceMin: 0.5,
+      kind: "script" as const,
+      limit: 1,
+      package: "app",
+      path: "package.json",
+      query: "start",
+    };
+    const flowCommand = {
+      confidenceMin: 0.4,
+      direction: "both" as const,
+      from: {
+        kind: "symbol" as const,
+        name: "main",
+        path: "src/main.ts",
+        sourceType: "code" as const,
+      },
+      include: ["calls", "workflow"] as const,
+      maxDepth: 2,
+      maxNodes: 5,
+      timeBudgetMs: 900,
+      to: {
+        id: "symbol-helper",
+        kind: "symbol" as const,
+        name: "helper",
+        path: "src/main.ts",
+        sourceType: "code" as const,
+      },
+    };
+    const impactCommand = {
+      confidenceMin: 0.3,
+      maxDepth: 2,
+      maxResults: 1,
+      mode: "callees" as const,
+      target: {
+        kind: "symbol" as const,
+        name: "main",
+        path: "src/main.ts",
+        sourceType: "code" as const,
+      },
+    };
+    const sliceCommand = {
+      criterion: {
+        kind: "symbol" as const,
+        name: "main",
+        path: "src/main.ts",
+        sourceType: "code" as const,
+      },
+      direction: "backward" as const,
+      include: ["calls"] as const,
+      maxEvidence: 3,
+      maxFiles: 2,
+      maxNodes: 2,
+    };
+
+    await handler.handle({
+      command: entrypointCommand,
+      type: "entrypoints.list",
+    });
+    await handler.handle({ command: flowCommand, type: "flow.trace" });
+    await handler.handle({ command: impactCommand, type: "impact.analyze" });
+    await handler.handle({ command: sliceCommand, type: "slice.compute" });
+
+    expect(canonicalFactList).toHaveBeenCalledWith();
+    expect(derivedFactList).toHaveBeenNthCalledWith(1);
+    expect(derivedFactList).toHaveBeenNthCalledWith(2);
+    expect(derivedFactList).toHaveBeenNthCalledWith(3);
+    expect(derivedFactList).toHaveBeenNthCalledWith(4);
+    expect(listEdgesByNode).toHaveBeenCalledWith("symbol-main");
+    expect(symbolCandidateList).toHaveBeenNthCalledWith(1, {
+      path: "package.json",
+    });
+    expect(symbolCandidateList).toHaveBeenNthCalledWith(2, {
+      kind: undefined,
+      path: "src/main.ts",
+      sourceType: "code",
+    });
+    expect(symbolCandidateList).toHaveBeenNthCalledWith(3, {
+      kind: undefined,
+      path: "src/main.ts",
+      sourceType: "code",
+    });
+    expect(symbolCandidateList).toHaveBeenNthCalledWith(4, {
+      kind: undefined,
+      path: "src/main.ts",
+      sourceType: "code",
+    });
+  });
+
+  it("surfaces Milestone 4.1 readiness and anchor errors from use cases unchanged", async () => {
+    const notReady = {
+      activeProjectIdentity: "project-a",
+      counters: { errors: 0, filesIndexed: 0, filesTotal: 0 },
+      indexRunId: null,
+      indexScope: "shared" as const,
+      lastError: null,
+      lastIndexedAt: null,
+      needsReindex: false,
+      pendingChanges: false,
+      state: "running" as const,
+      watcherState: "enabled" as const,
+    } satisfies StatusSnapshot;
+    const indexStatePort = createIndexStatePort({
+      getStatus: vi.fn().mockResolvedValue(notReady),
+    });
+    const handler = createDaemonRequestHandler({
+      canonicalFactStore: createCanonicalFactStore(),
+      derivedFactStore: createDerivedFactStore(),
+      embedding: { embedChunks: vi.fn(), embedQuery: vi.fn() },
+      indexStatePort,
+      ingestionPipeline: { run: vi.fn() },
+      internalGraphStore: createInternalGraphStore(),
+      logger: createLogger(),
+      retriever: { retrieve: vi.fn() },
+      statusContext: createStatusContext(),
+      symbolCandidateStore: createSymbolCandidateStore(),
+    });
+
+    await expect(
+      handler.handle({
+        command: { query: "start" },
+        type: "entrypoints.list",
+      }),
+    ).rejects.toMatchObject({ code: "ANALYSIS_NOT_READY" });
+
+    indexStatePort.getStatus = vi.fn().mockResolvedValue({
+      ...notReady,
+      counters: { errors: 0, filesIndexed: 1, filesTotal: 1 },
+      indexRunId: "run-5",
+      lastIndexedAt: "2026-05-03T00:00:00.000Z",
+      state: "idle" as const,
+    });
+
+    await expect(
+      handler.handle({
+        command: {
+          target: {
+            kind: "symbol",
+            name: "missing",
+            path: "src/main.ts",
+            sourceType: "code",
+          },
+        },
+        type: "impact.analyze",
+      }),
+    ).rejects.toMatchObject({ code: "ANCHOR_NOT_FOUND" });
+  });
+
+  it("routes Milestone 4.1 analysis requests through dedicated use cases", async () => {
+    const indexStatePort = createIndexStatePort({
+      getStatus: vi.fn().mockResolvedValue({
+        activeProjectIdentity: "project-a",
+        counters: { errors: 0, filesIndexed: 1, filesTotal: 1 },
+        indexRunId: "run-4",
+        indexScope: "shared",
+        lastError: null,
+        lastIndexedAt: "2026-05-03T00:00:00.000Z",
+        needsReindex: false,
+        pendingChanges: false,
+        state: "idle",
+        watcherState: "enabled",
+      } satisfies StatusSnapshot),
+    });
+    const canonicalFactStore = createCanonicalFactStore();
+    const canonicalFactList = vi.fn().mockResolvedValue([
+      {
+        confidence: 0.95,
+        contentHash: "hash-1",
+        evidenceId: "evidence-1",
+        extractor: "artifact:repo-config",
+        factId: "fact-1",
+        fileFingerprint: "fp-1",
+        indexRunId: "run-4",
+        kind: "package_script",
+        layer: "canonical",
+        path: "package.json",
+        payload: { command: "node dist/main.js", scriptName: "start" },
+        sourceType: "code",
+      },
+    ]);
+    canonicalFactStore.list = canonicalFactList;
+    const derivedFactStore = createDerivedFactStore();
+    const derivedFactList = vi.fn().mockResolvedValue([
+      {
+        confidence: 0.8,
+        contentHash: "hash-2",
+        derivedFactId: "derived-1",
+        evidenceId: "evidence-2",
+        extractor: "derived-fact",
+        fileFingerprint: "fp-1",
+        indexRunId: "run-4",
+        kind: "caller-callee-candidate",
+        layer: "derived",
+        path: "src/main.ts",
+        payload: {
+          fromId: "symbol-main",
+          fromLabel: "main",
+          toId: "symbol-mcp",
+          toLabel: "createMcpServer",
+        },
+        sourceType: "code",
+      },
+    ]);
+    derivedFactStore.list = derivedFactList;
+
+    const handler = createDaemonRequestHandler({
+      canonicalFactStore,
+      derivedFactStore,
+      embedding: { embedChunks: vi.fn(), embedQuery: vi.fn() },
+      indexStatePort,
+      ingestionPipeline: { run: vi.fn() },
+      internalGraphStore: createInternalGraphStore(),
+      logger: createLogger(),
+      retriever: { retrieve: vi.fn() },
+      statusContext: createStatusContext(),
+      symbolCandidateStore: createSymbolCandidateStore(),
+    });
+
+    const entrypoints = await handler.handle({
+      command: { query: "start" },
+      type: "entrypoints.list",
+    });
+    const flow = await handler.handle({
+      command: {
+        from: {
+          id: "symbol-main",
+          kind: "symbol",
+          name: "main",
+          path: "src/main.ts",
+          sourceType: "code",
+        },
+      },
+      type: "flow.trace",
+    });
+    const impact = await handler.handle({
+      command: {
+        target: {
+          id: "symbol-main",
+          kind: "symbol",
+          name: "main",
+          path: "src/main.ts",
+          sourceType: "code",
+        },
+      },
+      type: "impact.analyze",
+    });
+    const slice = await handler.handle({
+      command: {
+        criterion: {
+          id: "symbol-main",
+          kind: "symbol",
+          name: "main",
+          path: "src/main.ts",
+          sourceType: "code",
+        },
+      },
+      type: "slice.compute",
+    });
+
+    expect(entrypoints.type).toBe("entrypoints.list");
+    expect(flow.type).toBe("flow.trace");
+    expect(impact.type).toBe("impact.analyze");
+    expect(slice.type).toBe("slice.compute");
+  });
+
+  it("routes symbols.query to the symbol listing use case", async () => {
     const list = vi.fn().mockResolvedValue([
       {
         codeLocation: { endLine: 2, startLine: 1 },

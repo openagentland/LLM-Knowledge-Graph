@@ -11,12 +11,16 @@ import {
   createDaemonRequestHandler,
   type DaemonRequestHandler,
 } from "./application/daemon-request-handler.js";
+import type { AnalysisRuleRegistryPort } from "./application/ports/analysis-rule-registry-port.js";
 import type { DaemonClientPort } from "./application/ports/daemon-client-port.js";
 import type { EmbeddingPort } from "./application/ports/embedding-port.js";
 import type { IngestionPipelinePort } from "./application/ports/ingestion-pipeline-port.js";
 import type { LanguageRegistryPort } from "./application/ports/language-registry-port.js";
 import type { LoggerPort } from "./application/ports/logger-port.js";
+import type { OverlayBuilderPort } from "./application/ports/overlay-builder-port.js";
+import type { OverlayStorePort } from "./application/ports/overlay-store-port.js";
 import type { RetrieverPort } from "./application/ports/retriever-port.js";
+import type { RulePackRegistryPort } from "./application/ports/rule-pack-registry-port.js";
 import type { StructuredAnalyzerRegistryPort } from "./application/ports/structured-analyzer-registry-port.js";
 import type { StructuredObservationStorePort } from "./application/ports/structured-observation-store-port.js";
 import type { SymbolCandidateStorePort } from "./application/ports/symbol-candidate-store-port.js";
@@ -33,9 +37,12 @@ import { AstGrepStructuredAnalyzer } from "./infrastructure/indexing/ast-grep-st
 import { DefaultIngestionPipeline } from "./infrastructure/indexing/default-ingestion-pipeline.js";
 import { DefaultLanguageRegistry } from "./infrastructure/indexing/default-language-registry.js";
 import { DefaultStructuredAnalyzerRegistry } from "./infrastructure/indexing/default-structured-analyzer-registry.js";
+import { DerivedFactOverlayBuilder } from "./infrastructure/indexing/derived-fact-overlay-builder.js";
 import { GenericStructuredAnalyzer } from "./infrastructure/indexing/generic-structured-analyzer.js";
 import { InternalGraphProjector } from "./infrastructure/indexing/internal-graph-projector.js";
 import { RepoArtifactAnalyzer } from "./infrastructure/indexing/repo-artifact-analyzer.js";
+import { StaticAnalysisRuleRegistry } from "./infrastructure/indexing/static-analysis-rule-registry.js";
+import { StaticRulePackRegistry } from "./infrastructure/indexing/static-rule-pack-registry.js";
 import { TsJsDeepAnalyzer } from "./infrastructure/indexing/ts-js-deep-analyzer.js";
 import { createLogger } from "./infrastructure/logging/create-logger.js";
 import { FallbackParser } from "./infrastructure/parsing/fallback-parser.js";
@@ -46,6 +53,7 @@ import { FileDerivedFactRepository } from "./infrastructure/state/file-derived-f
 import { FileDocumentManifestRepository } from "./infrastructure/state/file-document-manifest-repository.js";
 import { FileIndexStateRepository } from "./infrastructure/state/file-index-state-repository.js";
 import { FileInternalGraphRepository } from "./infrastructure/state/file-internal-graph-repository.js";
+import { FileOverlayRepository } from "./infrastructure/state/file-overlay-repository.js";
 import { FileStructuredObservationRepository } from "./infrastructure/state/file-structured-observation-repository.js";
 import { FileSymbolCandidateRepository } from "./infrastructure/state/file-symbol-candidate-repository.js";
 import { LanceDbVectorStore } from "./infrastructure/storage/lance-db-vector-store.js";
@@ -156,6 +164,11 @@ export function composeDaemonHandler(options: {
     indexScope: config.indexScope,
     projectIdentity: config.activeProjectIdentity,
   });
+  const overlayStore: OverlayStorePort = new FileOverlayRepository({
+    homeDir: config.homeDir,
+    indexScope: config.indexScope,
+    projectIdentity: config.activeProjectIdentity,
+  });
   const structuredObservationStore: StructuredObservationStorePort =
     new FileStructuredObservationRepository({
       homeDir: config.homeDir,
@@ -169,11 +182,20 @@ export function composeDaemonHandler(options: {
         new RepoArtifactAnalyzer(),
         new GenericStructuredAnalyzer(),
         new TsJsDeepAnalyzer(),
-        new AstGrepStructuredAnalyzer(languageRegistry, new AstGrepRuleLoader()),
+        new AstGrepStructuredAnalyzer(
+          languageRegistry,
+          new AstGrepRuleLoader(),
+        ),
       ],
       languageRegistry,
     );
   const retriever: RetrieverPort = new HybridRetriever(embedding, vectorStore);
+  const overlayBuilder: OverlayBuilderPort = new DerivedFactOverlayBuilder();
+  const analysisRuleRegistry: AnalysisRuleRegistryPort =
+    new StaticAnalysisRuleRegistry();
+  const rulePackRegistry: RulePackRegistryPort = new StaticRulePackRegistry();
+  void analysisRuleRegistry;
+  void rulePackRegistry;
   const ingestionPipeline: IngestionPipelinePort = new DefaultIngestionPipeline(
     new GlobFileScanner({
       cwd,
@@ -196,15 +218,15 @@ export function composeDaemonHandler(options: {
     canonicalFactStore,
     derivedFactStore,
     internalGraphStore,
+    overlayStore,
+    overlayBuilder,
     new InternalGraphProjector(),
     logger,
     {
       activeProjectIdentity: config.activeProjectIdentity,
       chunking: {
         chunkTokenOverlap: config.chunkTokenOverlap,
-        embeddingContextLength:
-          config.embeddingContextLength ??
-          config.resolvedLlamaCppModel.contextLength,
+        embeddingContextLength: config.effectiveEmbeddingContextLength,
         embeddingTokenMargin: config.embeddingTokenMargin,
         maxChunkTokens: config.maxChunkTokens,
         maxSplitDepth: config.maxSplitDepth,

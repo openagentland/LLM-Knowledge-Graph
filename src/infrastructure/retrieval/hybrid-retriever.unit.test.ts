@@ -10,6 +10,7 @@ function createRecord(
   overrides: Partial<PersistedChunkRecord> &
     Pick<
       PersistedChunkRecord,
+      | "artifactKind"
       | "chunkKey"
       | "content"
       | "embedding"
@@ -22,6 +23,7 @@ function createRecord(
     >,
 ): PersistedChunkRecord {
   return {
+    artifactKind: overrides.artifactKind,
     chunkKey: overrides.chunkKey,
     content: overrides.content,
     contentHash: overrides.contentHash ?? `${overrides.chunkKey}-hash`,
@@ -68,6 +70,7 @@ describe("HybridRetriever", () => {
     };
     const searchByEmbedding = vi.fn().mockResolvedValue([
       createRetrievedChunk({
+        artifactKind: "code",
         chunkKey: "chunk-a",
         content: "totally unrelated words",
         embedding: [1, 0],
@@ -139,6 +142,7 @@ describe("HybridRetriever", () => {
     };
     const searchByEmbedding = vi.fn().mockResolvedValue([
       createRetrievedChunk({
+        artifactKind: "code",
         chunkKey: "chunk-b",
         content: "beta",
         embedding: [1, 0],
@@ -151,6 +155,7 @@ describe("HybridRetriever", () => {
         score: 0.8,
       }),
       createRetrievedChunk({
+        artifactKind: "code",
         chunkKey: "chunk-a",
         content: "alpha",
         embedding: [1, 0],
@@ -192,6 +197,130 @@ describe("HybridRetriever", () => {
     ).resolves.toMatchObject([
       { chunkKey: "chunk-a", score: 0.8 },
       { chunkKey: "chunk-b", score: 0.8 },
+    ]);
+  });
+
+  it("prioritizes context artifacts over code when scores are tied", async () => {
+    const embedQuery = vi.fn();
+    const embeddingPort: EmbeddingPort = {
+      embedChunks: vi.fn(),
+      embedQuery,
+    };
+    const searchByEmbedding = vi.fn().mockResolvedValue([
+      createRetrievedChunk({
+        artifactKind: "code",
+        chunkKey: "chunk-code",
+        content: "shared evidence implementation",
+        embedding: [1, 0],
+        evidenceId: "e-code",
+        extractor: "test",
+        fileFingerprint: "fp-code",
+        indexRunId: "run1",
+        path: "src/main.ts",
+        sourceType: "code",
+        score: 0.8,
+      }),
+      createRetrievedChunk({
+        artifactKind: "workflow",
+        chunkKey: "chunk-workflow",
+        content: "shared evidence workflow",
+        embedding: [1, 0],
+        evidenceId: "e-workflow",
+        extractor: "test",
+        fileFingerprint: "fp-workflow",
+        indexRunId: "run1",
+        path: ".github/workflows/ci.yml",
+        sourceType: "doc",
+        score: 0.8,
+      }),
+      createRetrievedChunk({
+        artifactKind: "doc",
+        chunkKey: "chunk-doc",
+        content: "shared evidence docs",
+        embedding: [1, 0],
+        evidenceId: "e-doc",
+        extractor: "test",
+        fileFingerprint: "fp-doc",
+        indexRunId: "run1",
+        path: "README.md",
+        sourceType: "doc",
+        score: 0.8,
+      }),
+    ]);
+    const vectorStorePort: VectorStorePort = {
+      clear: vi.fn(),
+      deleteByPath: vi.fn(),
+      listRecords: vi.fn(),
+      searchByEmbedding,
+      upsert: vi.fn(),
+    };
+
+    const retriever = new HybridRetriever(embeddingPort, vectorStorePort);
+    const results = await retriever.retrieve({
+      query: "shared evidence",
+      queryEmbedding: [1, 0],
+      topK: 5,
+    });
+
+    expect(results.map((result) => result.artifactKind)).toEqual([
+      "doc",
+      "workflow",
+      "code",
+    ]);
+  });
+
+  it("keeps context ties deterministic by chunk key", async () => {
+    const embedQuery = vi.fn();
+    const embeddingPort: EmbeddingPort = {
+      embedChunks: vi.fn(),
+      embedQuery,
+    };
+    const searchByEmbedding = vi.fn().mockResolvedValue([
+      createRetrievedChunk({
+        artifactKind: "workflow",
+        chunkKey: "chunk-b",
+        content: "workflow evidence",
+        embedding: [1, 0],
+        evidenceId: "e-workflow",
+        extractor: "test",
+        fileFingerprint: "fp-workflow",
+        indexRunId: "run1",
+        path: ".github/workflows/ci.yml",
+        sourceType: "doc",
+        score: 0.8,
+      }),
+      createRetrievedChunk({
+        artifactKind: "doc",
+        chunkKey: "chunk-a",
+        content: "doc evidence",
+        embedding: [1, 0],
+        evidenceId: "e-doc",
+        extractor: "test",
+        fileFingerprint: "fp-doc",
+        indexRunId: "run1",
+        path: "README.md",
+        sourceType: "doc",
+        score: 0.8,
+      }),
+    ]);
+    const vectorStorePort: VectorStorePort = {
+      clear: vi.fn(),
+      deleteByPath: vi.fn(),
+      listRecords: vi.fn(),
+      searchByEmbedding,
+      upsert: vi.fn(),
+    };
+
+    const retriever = new HybridRetriever(embeddingPort, vectorStorePort);
+    const results = await retriever.retrieve({
+      query: "shared evidence",
+      queryEmbedding: [1, 0],
+      topK: 5,
+    });
+
+    expect(results.map((result) => result.chunkKey)).toEqual([
+      "chunk-a",
+      "chunk-b",
     ]);
   });
 

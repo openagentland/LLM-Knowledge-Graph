@@ -13,7 +13,10 @@ import type {
   SymbolCandidateRecord,
 } from "../../domain/index.js";
 
-export type { PersistedStructuredObservationRecord, StructuredObservationFilter };
+export type {
+  PersistedStructuredObservationRecord,
+  StructuredObservationFilter,
+};
 export type {
   CanonicalFactKind,
   DerivedFactKind,
@@ -65,7 +68,10 @@ export type DerivedFactFilter = {
   path?: string;
 };
 
+export type PersistedInternalGraphNodeRecord = InternalGraphNodeRecord;
+export type PersistedInternalGraphEdgeRecord = InternalGraphEdgeRecord;
+
 export type PersistedInternalGraphRecord = {
-  edges: InternalGraphEdgeRecord[];
-  nodes: InternalGraphNodeRecord[];
+  edges: PersistedInternalGraphEdgeRecord[];
+  nodes: PersistedInternalGraphNodeRecord[];
 };

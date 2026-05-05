@@ -120,6 +120,90 @@ describe("Search knowledge integration", () => {
     expect(docResult?.codeLocation).toBeUndefined();
   });
 
+  it("returns context artifacts ahead of code when scores tie across repeated queries", async () => {
+    const homeDir = await createTempHomeDir("lkg-search-context-order-");
+    const embedding = new DeterministicEmbedding();
+    const vectorStore = createVectorStore(homeDir);
+    const retriever = new HybridRetriever(embedding, vectorStore);
+    const queryEmbedding = await embedding.embedQuery("shared evidence");
+
+    await vectorStore.upsert([
+      {
+        artifactKind: "code",
+        chunkKey: "chunk-code",
+        content: "shared evidence implementation",
+        contentHash: "hash-code",
+        embedding: [...queryEmbedding],
+        evidenceId: "evidence-code",
+        extractor: "test",
+        fileFingerprint: "fp-code",
+        indexRunId: "run-stable",
+        path: "src/main.ts",
+        sourceType: "code",
+        codeLocation: {
+          startLine: 1,
+          endLine: 1,
+        },
+      },
+      {
+        artifactKind: "workflow",
+        chunkKey: "chunk-workflow",
+        content: "shared evidence workflow",
+        contentHash: "hash-workflow",
+        embedding: [...queryEmbedding],
+        evidenceId: "evidence-workflow",
+        extractor: "test",
+        fileFingerprint: "fp-workflow",
+        indexRunId: "run-stable",
+        path: ".github/workflows/ci.yml",
+        sourceType: "doc",
+        docLocation: {
+          offset: 1,
+          section: "CI",
+        },
+      },
+      {
+        artifactKind: "doc",
+        chunkKey: "chunk-doc",
+        content: "shared evidence docs",
+        contentHash: "hash-doc",
+        embedding: [...queryEmbedding],
+        evidenceId: "evidence-doc",
+        extractor: "test",
+        fileFingerprint: "fp-doc",
+        indexRunId: "run-stable",
+        path: "README.md",
+        sourceType: "doc",
+        docLocation: {
+          offset: 0,
+          section: "Overview",
+        },
+      },
+    ]);
+
+    const first = await retriever.retrieve({
+      query: "shared evidence",
+      queryEmbedding,
+      topK: 10,
+    });
+    const second = await retriever.retrieve({
+      query: "shared evidence",
+      queryEmbedding,
+      topK: 10,
+    });
+
+    expect(first.map((result) => result.artifactKind)).toEqual([
+      "doc",
+      "workflow",
+      "code",
+    ]);
+    expect(second.map((result) => result.artifactKind)).toEqual([
+      "doc",
+      "workflow",
+      "code",
+    ]);
+  });
+
   it("returns stable results for repeated queries and breaks ties by chunk key", async () => {
     const homeDir = await createTempHomeDir("lkg-search-stability-");
     const embedding = new DeterministicEmbedding();
@@ -129,6 +213,7 @@ describe("Search knowledge integration", () => {
 
     await vectorStore.upsert([
       {
+        artifactKind: "code",
         chunkKey: "chunk-b",
         content: "shared evidence beta",
         contentHash: "hash-b",
@@ -145,6 +230,7 @@ describe("Search knowledge integration", () => {
         },
       },
       {
+        artifactKind: "code",
         chunkKey: "chunk-a",
         content: "shared evidence alpha",
         contentHash: "hash-a",

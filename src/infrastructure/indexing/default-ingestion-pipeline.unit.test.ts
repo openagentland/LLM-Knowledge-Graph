@@ -28,6 +28,8 @@ import type { EmbeddingPort } from "../../application/ports/embedding-port.js";
 import type { FileScannerPort } from "../../application/ports/file-scanner-port.js";
 import type { InternalGraphStorePort } from "../../application/ports/internal-graph-store-port.js";
 import type { LoggerPort } from "../../application/ports/logger-port.js";
+import type { OverlayBuilderPort } from "../../application/ports/overlay-builder-port.js";
+import type { OverlayStorePort } from "../../application/ports/overlay-store-port.js";
 import type { ParserPort } from "../../application/ports/parser-port.js";
 import type { StructuredAnalyzerPort } from "../../application/ports/structured-analyzer-port.js";
 import type { StructuredAnalyzerRegistryPort } from "../../application/ports/structured-analyzer-registry-port.js";
@@ -37,6 +39,7 @@ import type { SymbolCandidateStorePort } from "../../application/ports/symbol-ca
 import type { VectorStorePort } from "../../application/ports/vector-store-port.js";
 
 function createLogger(): LoggerPort & {
+  child: ReturnType<typeof vi.fn>;
   debug: ReturnType<typeof vi.fn>;
   error: ReturnType<typeof vi.fn>;
   info: ReturnType<typeof vi.fn>;
@@ -56,14 +59,19 @@ function createLogger(): LoggerPort & {
 function createCandidate(path: string): ScanCandidate {
   return {
     absolutePath: `/repo/${path}`,
+    artifactKind: "code",
     path,
     sizeBytes: 100,
     sourceType: "code",
   };
 }
 
-function createDocument(candidate: ScanCandidate, content: string): ParsedDocument {
+function createDocument(
+  candidate: ScanCandidate,
+  content: string,
+): ParsedDocument {
   return {
+    artifactKind: candidate.artifactKind,
     content,
     language: "ts",
     path: candidate.path,
@@ -81,7 +89,9 @@ function createDocument(candidate: ScanCandidate, content: string): ParsedDocume
   };
 }
 
-function createStructuredObservation(path: string): PersistedStructuredObservationRecord {
+function createStructuredObservation(
+  path: string,
+): PersistedStructuredObservationRecord {
   return {
     codeLocation: { endLine: 1, startLine: 1 },
     confidence: 0.9,
@@ -96,6 +106,46 @@ function createStructuredObservation(path: string): PersistedStructuredObservati
     path,
     sourceType: "code",
     symbolKind: "function",
+  };
+}
+
+function createPartitionedDocument(candidate: ScanCandidate): ParsedDocument {
+  return {
+    artifactKind: candidate.artifactKind,
+    content: ["const first = 1;", "const second = 2;"].join("\n"),
+    language: "ts",
+    partitions: [
+      {
+        content: "const first = 1;",
+        index: 0,
+        location: { endLine: 1, startLine: 1 },
+        partitionId: `${candidate.path}:0`,
+        status: "partial",
+        total: 2,
+      },
+      {
+        content: "const second = 2;",
+        index: 1,
+        location: { endLine: 2, startLine: 2 },
+        partitionId: `${candidate.path}:1`,
+        status: "complete",
+        total: 2,
+      },
+    ],
+    path: candidate.path,
+    sourceType: candidate.sourceType,
+    structuralBlocks: [
+      {
+        content: "const first = 1;",
+        kind: "lexical_declaration",
+        location: { endLine: 1, startLine: 1 },
+      },
+      {
+        content: "const second = 2;",
+        kind: "lexical_declaration",
+        location: { endLine: 2, startLine: 2 },
+      },
+    ],
   };
 }
 
@@ -116,7 +166,9 @@ function createChunk(options: {
   };
 }
 
-function createManifestEntry(overrides: Partial<FileManifestEntry> = {}): FileManifestEntry {
+function createManifestEntry(
+  overrides: Partial<FileManifestEntry> = {},
+): FileManifestEntry {
   return {
     chunkKeys: ["chunk-a"],
     fileFingerprint: "fingerprint-old",
@@ -155,14 +207,28 @@ function createPipeline(options: {
     ...options.chunker,
   };
   const embedding: EmbeddingPort = {
-    embedChunks: vi.fn<(chunks: Array<{ content: string; contentHash: string; evidenceId: string; path: string; sourceType: "code" | "doc" }>) => Promise<Array<{ evidenceId: string; vector: number[] }>>>().mockResolvedValue([]),
+    embedChunks: vi
+      .fn<
+        (
+          chunks: Array<{
+            content: string;
+            contentHash: string;
+            evidenceId: string;
+            path: string;
+            sourceType: "code" | "doc";
+          }>,
+        ) => Promise<Array<{ evidenceId: string; vector: number[] }>>
+      >()
+      .mockResolvedValue([]),
     embedQuery: vi.fn(),
     ...options.embedding,
   };
   const vectorStore: VectorStorePort = {
     clear: vi.fn().mockResolvedValue(undefined),
     deleteByPath: vi.fn().mockResolvedValue(undefined),
-    listRecords: vi.fn<() => Promise<PersistedChunkRecord[]>>().mockResolvedValue([]),
+    listRecords: vi
+      .fn<() => Promise<PersistedChunkRecord[]>>()
+      .mockResolvedValue([]),
     searchByEmbedding: vi.fn().mockResolvedValue([]),
     upsert: vi.fn().mockResolvedValue(undefined),
     ...options.vectorStore,
@@ -178,32 +244,53 @@ function createPipeline(options: {
   const symbolCandidates: SymbolCandidateStorePort = {
     clear: vi.fn().mockResolvedValue(undefined),
     deleteByPath: vi.fn().mockResolvedValue(undefined),
-    list: vi.fn<() => Promise<PersistedSymbolCandidateRecord[]>>().mockResolvedValue([]),
+    list: vi
+      .fn<() => Promise<PersistedSymbolCandidateRecord[]>>()
+      .mockResolvedValue([]),
     upsert: vi.fn().mockResolvedValue(undefined),
   };
   const structuredObservations: StructuredObservationStorePort = {
     clear: vi.fn().mockResolvedValue(undefined),
     deleteByPath: vi.fn().mockResolvedValue(undefined),
-    list: vi.fn<() => Promise<PersistedStructuredObservationRecord[]>>().mockResolvedValue([]),
+    list: vi
+      .fn<() => Promise<PersistedStructuredObservationRecord[]>>()
+      .mockResolvedValue([]),
     upsert: vi.fn().mockResolvedValue(undefined),
   };
   const canonicalFacts: CanonicalFactStorePort = {
     clear: vi.fn().mockResolvedValue(undefined),
     deleteByPath: vi.fn().mockResolvedValue(undefined),
-    list: vi.fn<() => Promise<PersistedCanonicalFactRecord[]>>().mockResolvedValue([]),
+    list: vi
+      .fn<() => Promise<PersistedCanonicalFactRecord[]>>()
+      .mockResolvedValue([]),
     upsert: vi.fn().mockResolvedValue(undefined),
   };
   const derivedFacts: DerivedFactStorePort = {
     clear: vi.fn().mockResolvedValue(undefined),
     deleteByPath: vi.fn().mockResolvedValue(undefined),
-    list: vi.fn<() => Promise<PersistedDerivedFactRecord[]>>().mockResolvedValue([]),
+    list: vi
+      .fn<() => Promise<PersistedDerivedFactRecord[]>>()
+      .mockResolvedValue([]),
     upsert: vi.fn().mockResolvedValue(undefined),
   };
   const internalGraph: InternalGraphStorePort = {
     clear: vi.fn().mockResolvedValue(undefined),
     deleteByPath: vi.fn().mockResolvedValue(undefined),
+    listByPath: vi.fn().mockResolvedValue({ edges: [], nodes: [] }),
+    listEdgesByNode: vi.fn().mockResolvedValue([]),
+    listNodesByPath: vi.fn().mockResolvedValue([]),
     read: vi.fn().mockResolvedValue({ edges: [], nodes: [] }),
+    readOverlays: vi.fn().mockResolvedValue({ records: [] }),
     replace: vi.fn().mockResolvedValue(undefined),
+    replaceOverlays: vi.fn().mockResolvedValue(undefined),
+  };
+  const overlayStore: OverlayStorePort = {
+    clear: vi.fn().mockResolvedValue(undefined),
+    read: vi.fn().mockResolvedValue({ records: [] }),
+    replace: vi.fn().mockResolvedValue(undefined),
+  };
+  const overlayBuilder: OverlayBuilderPort = {
+    build: vi.fn().mockResolvedValue([]),
   };
   const graphProjector: StructuredDataProjectorPort =
     options.graphProjector ?? new InternalGraphProjector();
@@ -225,6 +312,8 @@ function createPipeline(options: {
     canonicalFacts,
     derivedFacts,
     internalGraph,
+    overlayStore,
+    overlayBuilder,
     graphProjector,
     logger,
     {
@@ -253,6 +342,7 @@ function createPipeline(options: {
     internalGraph,
     logger,
     manifest,
+    overlayStore,
     parser,
     pipeline,
     scanner,
@@ -272,7 +362,10 @@ function getMock<T extends (...args: never[]) => unknown>(
 describe("DefaultIngestionPipeline", () => {
   it("clears vector store and manifest before a rebuild run", async () => {
     const candidate = createCandidate("src/rebuild.ts");
-    const document = createDocument(candidate, "export const rebuild = true;\n");
+    const document = createDocument(
+      candidate,
+      "export const rebuild = true;\n",
+    );
     const chunk = createChunk({
       content: document.content,
       evidenceId: "evidence-1",
@@ -289,9 +382,12 @@ describe("DefaultIngestionPipeline", () => {
       canonicalFacts,
       derivedFacts,
       internalGraph,
+      overlayStore,
     } = createPipeline({
       scanner: {
-        scan: vi.fn().mockResolvedValue({ candidates: [candidate], skipped: [] }),
+        scan: vi
+          .fn()
+          .mockResolvedValue({ candidates: [candidate], skipped: [] }),
       },
       parser: {
         parse: vi.fn().mockResolvedValue(document),
@@ -300,9 +396,9 @@ describe("DefaultIngestionPipeline", () => {
         chunk: vi.fn().mockResolvedValue([chunk]),
       },
       embedding: {
-        embedChunks: vi.fn().mockResolvedValue([
-          { evidenceId: "evidence-1", vector: [1, 2, 3] },
-        ]),
+        embedChunks: vi
+          .fn()
+          .mockResolvedValue([{ evidenceId: "evidence-1", vector: [1, 2, 3] }]),
       },
       vectorStore: {
         clear: vi.fn().mockImplementation(() => {
@@ -326,7 +422,10 @@ describe("DefaultIngestionPipeline", () => {
       },
     });
 
-    const summary = await pipeline.run({ indexRunId: "run-1", mode: "rebuild" });
+    const summary = await pipeline.run({
+      indexRunId: "run-1",
+      mode: "rebuild",
+    });
 
     const clearVectorStore = getMock(vectorStore.clear);
     const clearManifest = getMock(manifest.clear);
@@ -335,6 +434,7 @@ describe("DefaultIngestionPipeline", () => {
     const clearCanonicalFacts = getMock(canonicalFacts.clear);
     const clearDerivedFacts = getMock(derivedFacts.clear);
     const clearInternalGraph = getMock(internalGraph.clear);
+    const clearOverlayStore = getMock(overlayStore.clear);
 
     expect(clearVectorStore.mock.calls).toHaveLength(1);
     expect(clearManifest.mock.calls).toHaveLength(1);
@@ -343,20 +443,26 @@ describe("DefaultIngestionPipeline", () => {
     expect(clearCanonicalFacts.mock.calls).toHaveLength(1);
     expect(clearDerivedFacts.mock.calls).toHaveLength(1);
     expect(clearInternalGraph.mock.calls).toHaveLength(1);
+    expect(clearOverlayStore.mock.calls).toHaveLength(1);
     expect(calls).toEqual([
       "clear-vector",
       "clear-manifest",
       "upsert-vector",
       "upsert-manifest",
     ]);
-    expect(summary.counters).toEqual({ errors: 0, filesIndexed: 1, filesTotal: 1 });
+    expect(summary.counters).toEqual({
+      errors: 0,
+      filesIndexed: 1,
+      filesTotal: 1,
+    });
   });
 
   it("short-circuits unchanged files without downstream writes", async () => {
     const candidate = createCandidate("src/unchanged.ts");
     const document = createDocument(candidate, "export const stable = true;\n");
     const manifestEntry = createManifestEntry({
-      fileFingerprint: "e9446810aede94ee09fd0720cafe0f6d15f9b35dbcda662bcaf3d63d7009c479",
+      fileFingerprint:
+        "e9446810aede94ee09fd0720cafe0f6d15f9b35dbcda662bcaf3d63d7009c479",
       path: candidate.path,
     });
 
@@ -370,7 +476,9 @@ describe("DefaultIngestionPipeline", () => {
       structuredObservations,
     } = createPipeline({
       scanner: {
-        scan: vi.fn().mockResolvedValue({ candidates: [candidate], skipped: [] }),
+        scan: vi
+          .fn()
+          .mockResolvedValue({ candidates: [candidate], skipped: [] }),
       },
       parser: {
         parse: vi.fn().mockResolvedValue(document),
@@ -378,9 +486,15 @@ describe("DefaultIngestionPipeline", () => {
       manifest: {
         getAll: vi.fn().mockResolvedValue([manifestEntry]),
       },
+      graphProjector: {
+        project: vi.fn().mockReturnValue({ edges: [], nodes: [] }),
+      },
     });
 
-    const summary = await pipeline.run({ indexRunId: "run-2", mode: "incremental" });
+    const summary = await pipeline.run({
+      indexRunId: "run-2",
+      mode: "incremental",
+    });
 
     const chunkSpy = getMock(chunker.chunk);
     const embedChunksSpy = getMock(embedding.embedChunks);
@@ -389,7 +503,11 @@ describe("DefaultIngestionPipeline", () => {
     const symbolUpsertSpy = getMock(symbolCandidates.upsert);
     const observationUpsertSpy = getMock(structuredObservations.upsert);
 
-    expect(summary.counters).toEqual({ errors: 0, filesIndexed: 1, filesTotal: 1 });
+    expect(summary.counters).toEqual({
+      errors: 0,
+      filesIndexed: 1,
+      filesTotal: 1,
+    });
     expect(summary.filesUnchanged).toBe(1);
     expect(summary.chunksWritten).toBe(0);
     expect(chunkSpy.mock.calls).toHaveLength(0);
@@ -404,8 +522,16 @@ describe("DefaultIngestionPipeline", () => {
     const candidate = createCandidate("src/changed.ts");
     const document = createDocument(candidate, "export const changed = 2;\n");
     const chunks = [
-      createChunk({ content: "chunk one", evidenceId: "evidence-1", path: candidate.path }),
-      createChunk({ content: "chunk two", evidenceId: "evidence-2", path: candidate.path }),
+      createChunk({
+        content: "chunk one",
+        evidenceId: "evidence-1",
+        path: candidate.path,
+      }),
+      createChunk({
+        content: "chunk two",
+        evidenceId: "evidence-2",
+        path: candidate.path,
+      }),
     ];
     const manifestEntry = createManifestEntry({
       chunkKeys: ["old-1", "old-2"],
@@ -422,7 +548,9 @@ describe("DefaultIngestionPipeline", () => {
       structuredObservations,
     } = createPipeline({
       scanner: {
-        scan: vi.fn().mockResolvedValue({ candidates: [candidate], skipped: [] }),
+        scan: vi
+          .fn()
+          .mockResolvedValue({ candidates: [candidate], skipped: [] }),
       },
       parser: {
         parse: vi.fn().mockResolvedValue(document),
@@ -438,7 +566,9 @@ describe("DefaultIngestionPipeline", () => {
       },
       structuredAnalyzers: [
         {
-          analyze: vi.fn().mockResolvedValue([createStructuredObservation(candidate.path)]),
+          analyze: vi
+            .fn()
+            .mockResolvedValue([createStructuredObservation(candidate.path)]),
           supports: vi.fn().mockReturnValue(true),
         },
       ],
@@ -459,13 +589,21 @@ describe("DefaultIngestionPipeline", () => {
           return Promise.resolve();
         }),
       },
+      graphProjector: {
+        project: vi.fn().mockReturnValue({ edges: [], nodes: [] }),
+      },
     });
 
-    const summary = await pipeline.run({ indexRunId: "run-3", mode: "incremental" });
+    const summary = await pipeline.run({
+      indexRunId: "run-3",
+      mode: "incremental",
+    });
 
     const deleteByPathSpy = getMock(vectorStore.deleteByPath);
     const symbolDeleteByPathSpy = getMock(symbolCandidates.deleteByPath);
-    const observationDeleteByPathSpy = getMock(structuredObservations.deleteByPath);
+    const observationDeleteByPathSpy = getMock(
+      structuredObservations.deleteByPath,
+    );
     const symbolUpsertSpy = getMock(symbolCandidates.upsert);
     const observationUpsertSpy = getMock(structuredObservations.upsert);
     const manifestUpsertSpy = getMock(manifest.upsert);
@@ -499,17 +637,206 @@ describe("DefaultIngestionPipeline", () => {
     expect(manifestUpsertSpy.mock.calls).toHaveLength(1);
     expect(manifestUpsertSpy.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
+        artifactKind: candidate.artifactKind,
         chunkKeys: expect.any(Array) as string[],
         fileFingerprint: expect.any(String) as string,
+        latestPartitionStatus: undefined,
+        partitionCount: undefined,
         path: candidate.path,
       }),
+    );
+  });
+
+  it("persists partition metadata for partial ingestion success", async () => {
+    const candidate = createCandidate("src/partitioned.ts");
+    const document = createPartitionedDocument(candidate);
+    const chunks = [
+      createChunk({
+        content: "const first = 1;",
+        evidenceId: "evidence-1",
+        path: candidate.path,
+      }),
+      createChunk({
+        content: "const second = 2;",
+        evidenceId: "evidence-2",
+        path: candidate.path,
+      }),
+    ];
+
+    const { pipeline, manifest } = createPipeline({
+      scanner: {
+        scan: vi
+          .fn()
+          .mockResolvedValue({ candidates: [candidate], skipped: [] }),
+      },
+      parser: {
+        parse: vi.fn().mockResolvedValue(document),
+      },
+      chunker: {
+        chunk: vi.fn().mockResolvedValue(chunks),
+      },
+      embedding: {
+        embedChunks: vi.fn().mockResolvedValue([
+          { evidenceId: "evidence-1", vector: [1, 2, 3] },
+          { evidenceId: "evidence-2", vector: [4, 5, 6] },
+        ]),
+      },
+      graphProjector: {
+        project: vi.fn().mockReturnValue({ edges: [], nodes: [] }),
+      },
+    });
+
+    const summary = await pipeline.run({
+      indexRunId: "run-partial",
+      mode: "full",
+    });
+
+    const manifestUpsertSpy = getMock(manifest.upsert);
+    expect(summary.counters).toEqual({
+      errors: 0,
+      filesIndexed: 1,
+      filesTotal: 1,
+    });
+    expect(manifestUpsertSpy.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        latestPartitionStatus: "partial",
+        partitionCount: 2,
+        path: candidate.path,
+      }),
+    );
+  });
+
+  it("indexes degraded oversized valuable files without inflating ingestion errors", async () => {
+    const candidate: ScanCandidate = {
+      absolutePath: "/repo/architecture.md",
+      artifactKind: "doc",
+      path: "architecture.md",
+      sizeBytes: 10_000,
+      sourceType: "doc",
+    };
+    const document: ParsedDocument = {
+      artifactKind: "doc",
+      content: "# Architecture\n\nimportant system overview",
+      language: null,
+      partitions: [
+        {
+          content: "# Architecture",
+          index: 0,
+          location: { section: "Architecture" },
+          partitionId: "architecture.md:0",
+          status: "degraded",
+          total: 1,
+        },
+      ],
+      path: candidate.path,
+      sourceType: "doc",
+    };
+    const chunk: DocumentChunk = {
+      content: document.content,
+      contentHash: "architecture-hash",
+      docLocation: { section: "Architecture" },
+      evidenceId: "architecture-evidence",
+      extractor: "test-extractor",
+      indexRunId: "run-degraded",
+      partitionId: "architecture.md:0",
+      partitionIndex: 0,
+      partitionStatus: "degraded",
+      partitionTotal: 1,
+      path: candidate.path,
+      sourceType: "doc",
+    };
+
+    const logger = createLogger();
+    const { pipeline, manifest, vectorStore } = createPipeline({
+      logger,
+      scanner: {
+        scan: vi
+          .fn()
+          .mockResolvedValue({ candidates: [candidate], skipped: [] }),
+      },
+      parser: {
+        parse: vi.fn().mockResolvedValue(document),
+      },
+      chunker: {
+        chunk: vi.fn().mockResolvedValue([chunk]),
+      },
+      embedding: {
+        embedChunks: vi
+          .fn()
+          .mockResolvedValue([
+            { evidenceId: "architecture-evidence", vector: [1, 2, 3] },
+          ]),
+      },
+      vectorStore: {
+        upsert: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+
+    const summary = await pipeline.run({
+      indexRunId: "run-degraded",
+      mode: "full",
+    });
+
+    expect(summary.counters).toEqual({
+      errors: 0,
+      filesIndexed: 1,
+      filesTotal: 1,
+    });
+    expect(getMock(manifest.upsert).mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        latestPartitionStatus: "degraded",
+        partitionCount: 1,
+        path: candidate.path,
+      }),
+    );
+    expect(getMock(vectorStore.upsert).mock.calls).toHaveLength(1);
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      "Failed to ingest file",
+      expect.objectContaining({ path: candidate.path }),
+    );
+  });
+
+  it("returns scanner too_large skips without inflating ingestion errors", async () => {
+    const logger = createLogger();
+    const { pipeline, parser, chunker, embedding } = createPipeline({
+      logger,
+      scanner: {
+        scan: vi.fn().mockResolvedValue({
+          candidates: [],
+          skipped: [{ path: "package-lock.json", reason: "too_large" }],
+        }),
+      },
+    });
+
+    const summary = await pipeline.run({
+      indexRunId: "run-too-large-skip",
+      mode: "full",
+    });
+
+    expect(summary.skipped).toEqual([
+      { path: "package-lock.json", reason: "too_large" },
+    ]);
+    expect(summary.counters).toEqual({
+      errors: 0,
+      filesIndexed: 0,
+      filesTotal: 0,
+    });
+    expect(getMock(parser.parse)).not.toHaveBeenCalled();
+    expect(getMock(chunker.chunk)).not.toHaveBeenCalled();
+    expect(getMock(embedding.embedChunks)).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      "Failed to ingest file",
+      expect.objectContaining({ path: "package-lock.json" }),
     );
   });
 
   it("logs failures and continues processing later files", async () => {
     const badCandidate = createCandidate("src/bad.ts");
     const goodCandidate = createCandidate("src/good.ts");
-    const goodDocument = createDocument(goodCandidate, "export const good = true;\n");
+    const goodDocument = createDocument(
+      goodCandidate,
+      "export const good = true;\n",
+    );
     const goodChunk = createChunk({
       content: goodDocument.content,
       evidenceId: "evidence-good",
@@ -541,20 +868,29 @@ describe("DefaultIngestionPipeline", () => {
         chunk: vi.fn().mockResolvedValue([goodChunk]),
       },
       embedding: {
-        embedChunks: vi.fn().mockResolvedValue([
-          { evidenceId: "evidence-good", vector: [5, 6, 7] },
-        ]),
+        embedChunks: vi
+          .fn()
+          .mockResolvedValue([
+            { evidenceId: "evidence-good", vector: [5, 6, 7] },
+          ]),
       },
     });
 
-    const summary = await pipeline.run({ indexRunId: "run-4", mode: "incremental" });
+    const summary = await pipeline.run({
+      indexRunId: "run-4",
+      mode: "incremental",
+    });
 
     const upsertSpy = getMock(vectorStore.upsert);
     const symbolUpsertSpy = getMock(symbolCandidates.upsert);
     const observationUpsertSpy = getMock(structuredObservations.upsert);
     const manifestUpsertSpy = getMock(manifest.upsert);
 
-    expect(summary.counters).toEqual({ errors: 1, filesIndexed: 1, filesTotal: 2 });
+    expect(summary.counters).toEqual({
+      errors: 1,
+      filesIndexed: 1,
+      filesTotal: 2,
+    });
     expect(summary.progress.filesProcessed).toBe(2);
     expect(logger.warn).toHaveBeenCalledWith("Failed to ingest file", {
       error: "parse failed",
@@ -578,41 +914,48 @@ describe("DefaultIngestionPipeline", () => {
       path: candidate.path,
     });
     const structuredAnalyzer: StructuredAnalyzerPort = {
-      analyze: vi.fn().mockResolvedValue([createStructuredObservation(candidate.path)]),
+      analyze: vi
+        .fn()
+        .mockResolvedValue([createStructuredObservation(candidate.path)]),
       supports: vi.fn().mockReturnValue(true),
     };
 
-    const { pipeline, symbolCandidates, structuredObservations } = createPipeline({
-      scanner: {
-        scan: vi.fn().mockResolvedValue({ candidates: [candidate], skipped: [] }),
-      },
-      parser: {
-        parse: vi.fn().mockResolvedValue({
-          ...document,
-          structuralBlocks: [
-            {
-              content: "export const answer = 42;",
-              kind: "lexical_declaration",
-              location: { endLine: 1, startLine: 1 },
-            },
-            {
-              content: "export function greet() {\n  return 'hi';\n}",
-              kind: "function_declaration",
-              location: { endLine: 3, startLine: 2 },
-            },
-          ],
-        }),
-      },
-      chunker: {
-        chunk: vi.fn().mockResolvedValue([chunk]),
-      },
-      embedding: {
-        embedChunks: vi.fn().mockResolvedValue([
-          { evidenceId: "evidence-symbols", vector: [1, 1, 1] },
-        ]),
-      },
-      structuredAnalyzers: [structuredAnalyzer],
-    });
+    const { pipeline, symbolCandidates, structuredObservations } =
+      createPipeline({
+        scanner: {
+          scan: vi
+            .fn()
+            .mockResolvedValue({ candidates: [candidate], skipped: [] }),
+        },
+        parser: {
+          parse: vi.fn().mockResolvedValue({
+            ...document,
+            structuralBlocks: [
+              {
+                content: "export const answer = 42;",
+                kind: "lexical_declaration",
+                location: { endLine: 1, startLine: 1 },
+              },
+              {
+                content: "export function greet() {\n  return 'hi';\n}",
+                kind: "function_declaration",
+                location: { endLine: 3, startLine: 2 },
+              },
+            ],
+          }),
+        },
+        chunker: {
+          chunk: vi.fn().mockResolvedValue([chunk]),
+        },
+        embedding: {
+          embedChunks: vi
+            .fn()
+            .mockResolvedValue([
+              { evidenceId: "evidence-symbols", vector: [1, 1, 1] },
+            ]),
+        },
+        structuredAnalyzers: [structuredAnalyzer],
+      });
 
     await pipeline.run({ indexRunId: "run-symbols", mode: "full" });
 
@@ -644,7 +987,10 @@ describe("DefaultIngestionPipeline", () => {
 
   it("records structured observations and tolerates analyzer failures", async () => {
     const candidate = createCandidate("src/structured.ts");
-    const document = createDocument(candidate, "export function structured() { return true; }\n");
+    const document = createDocument(
+      candidate,
+      "export function structured() { return true; }\n",
+    );
     const chunk = createChunk({
       content: document.content,
       evidenceId: "evidence-structured",
@@ -655,7 +1001,9 @@ describe("DefaultIngestionPipeline", () => {
     const { pipeline, structuredObservations, vectorStore } = createPipeline({
       logger,
       scanner: {
-        scan: vi.fn().mockResolvedValue({ candidates: [candidate], skipped: [] }),
+        scan: vi
+          .fn()
+          .mockResolvedValue({ candidates: [candidate], skipped: [] }),
       },
       parser: {
         parse: vi.fn().mockResolvedValue(document),
@@ -664,9 +1012,11 @@ describe("DefaultIngestionPipeline", () => {
         chunk: vi.fn().mockResolvedValue([chunk]),
       },
       embedding: {
-        embedChunks: vi.fn().mockResolvedValue([
-          { evidenceId: "evidence-structured", vector: [1, 2, 3] },
-        ]),
+        embedChunks: vi
+          .fn()
+          .mockResolvedValue([
+            { evidenceId: "evidence-structured", vector: [1, 2, 3] },
+          ]),
       },
       structuredAnalyzers: [
         {
@@ -674,13 +1024,21 @@ describe("DefaultIngestionPipeline", () => {
           supports: vi.fn().mockReturnValue(true),
         },
         {
-          analyze: vi.fn().mockResolvedValue([createStructuredObservation(candidate.path)]),
+          analyze: vi
+            .fn()
+            .mockResolvedValue([createStructuredObservation(candidate.path)]),
           supports: vi.fn().mockReturnValue(true),
         },
       ],
+      graphProjector: {
+        project: vi.fn().mockReturnValue({ edges: [], nodes: [] }),
+      },
     });
 
-    const summary = await pipeline.run({ indexRunId: "run-structured", mode: "full" });
+    const summary = await pipeline.run({
+      indexRunId: "run-structured",
+      mode: "full",
+    });
 
     const observationUpsertSpy = getMock(structuredObservations.upsert);
     const vectorUpsertSpy = getMock(vectorStore.upsert);
@@ -716,7 +1074,9 @@ describe("DefaultIngestionPipeline", () => {
       path: candidate.path,
       qualityGates: [{ command: "npm run lint", tool: "eslint" }],
       sourceType: "doc",
-      workflowSteps: [{ command: "npm run lint", name: "Lint", scriptName: "lint" }],
+      workflowSteps: [
+        { command: "npm run lint", name: "Lint", scriptName: "lint" },
+      ],
     };
     const chunk = {
       content: document.content,
@@ -728,70 +1088,142 @@ describe("DefaultIngestionPipeline", () => {
       sourceType: "doc" as const,
     };
 
-    const { pipeline, canonicalFacts, derivedFacts, internalGraph } = createPipeline({
-      scanner: {
-        scan: vi.fn().mockResolvedValue({ candidates: [candidate], skipped: [] }),
-      },
-      parser: {
-        parse: vi.fn().mockResolvedValue(document),
-      },
-      chunker: {
-        chunk: vi.fn().mockResolvedValue([chunk]),
-      },
-      embedding: {
-        embedChunks: vi.fn().mockResolvedValue([
-          { evidenceId: "workflow-evidence", vector: [1, 2, 3] },
-        ]),
-      },
-      structuredAnalyzers: [
-        {
-          analyze: vi.fn().mockResolvedValue([
-            {
-              confidence: 0.9,
-              contentHash: "workflow-content",
-              evidenceId: "workflow-observation",
-              extractor: "artifact:repo-config",
-              indexRunId: "run-graph",
-              kind: "workflow",
-              language: "yaml",
-              name: ".github/workflows/ci.yml",
-              path: candidate.path,
-              sourceType: "doc",
-              symbolKind: "workflow",
-            },
-            {
-              confidence: 0.9,
-              contentHash: "task-content",
-              evidenceId: "task-observation",
-              extractor: "artifact:repo-config",
-              indexRunId: "run-graph",
-              kind: "task",
-              language: "yaml",
-              metadata: { command: "npm run lint" },
-              name: "lint",
-              path: candidate.path,
-              sourceType: "doc",
-              symbolKind: "package-script",
-            },
-            {
-              codeLocation: { endLine: 1, startLine: 1 },
-              confidence: 0.9,
-              contentHash: "export-content",
-              evidenceId: "export-observation",
-              extractor: "custom:ts-js-deep",
-              indexRunId: "run-graph",
-              kind: "symbol_export",
-              language: "ts",
-              name: "build",
-              path: candidate.path,
-              sourceType: "doc",
-              symbolKind: "function",
-            },
-          ]),
-          supports: vi.fn().mockReturnValue(true),
+    const { pipeline, canonicalFacts, derivedFacts, internalGraph } =
+      createPipeline({
+        scanner: {
+          scan: vi
+            .fn()
+            .mockResolvedValue({ candidates: [candidate], skipped: [] }),
         },
-      ],
-    });
+        parser: {
+          parse: vi.fn().mockResolvedValue(document),
+        },
+        chunker: {
+          chunk: vi.fn().mockResolvedValue([chunk]),
+        },
+        embedding: {
+          embedChunks: vi
+            .fn()
+            .mockResolvedValue([
+              { evidenceId: "workflow-evidence", vector: [1, 2, 3] },
+            ]),
+        },
+        structuredAnalyzers: [
+          {
+            analyze: vi.fn().mockResolvedValue([
+              {
+                confidence: 0.9,
+                contentHash: "workflow-content",
+                evidenceId: "workflow-observation",
+                extractor: "artifact:repo-config",
+                indexRunId: "run-graph",
+                kind: "workflow",
+                language: "yaml",
+                name: ".github/workflows/ci.yml",
+                path: candidate.path,
+                sourceType: "doc",
+                symbolKind: "workflow",
+              },
+              {
+                confidence: 0.9,
+                contentHash: "task-content",
+                evidenceId: "task-observation",
+                extractor: "artifact:repo-config",
+                indexRunId: "run-graph",
+                kind: "task",
+                language: "yaml",
+                metadata: { command: "npm run lint" },
+                name: "lint",
+                path: candidate.path,
+                sourceType: "doc",
+                symbolKind: "package-script",
+              },
+              {
+                codeLocation: { endLine: 1, startLine: 1 },
+                confidence: 0.9,
+                contentHash: "export-content",
+                evidenceId: "export-observation",
+                extractor: "custom:ts-js-deep",
+                indexRunId: "run-graph",
+                kind: "symbol_export",
+                language: "ts",
+                name: "build",
+                path: candidate.path,
+                sourceType: "doc",
+                symbolKind: "function",
+              },
+            ]),
+            supports: vi.fn().mockReturnValue(true),
+          },
+        ],
+        graphProjector: {
+          project: vi.fn().mockReturnValue({
+            edges: [
+              {
+                edgeId: "edge-1",
+                fromNodeId: "workflow",
+                kind: "REPRESENTS",
+                path: candidate.path,
+                sourceType: "doc",
+                toNodeId: "workflow-node",
+              },
+              {
+                edgeId: "edge-2",
+                fromNodeId: "workflow",
+                kind: "workflow-contains-job",
+                path: candidate.path,
+                sourceType: "doc",
+                toNodeId: "job-node",
+              },
+              {
+                edgeId: "edge-3",
+                fromNodeId: "task",
+                kind: "task-runs-command",
+                path: candidate.path,
+                sourceType: "doc",
+                toNodeId: "command-node",
+              },
+            ],
+            nodes: [
+              {
+                nodeId: "workflow-node",
+                kind: "Workflow",
+                label: "workflow",
+                path: candidate.path,
+                sourceType: "doc",
+              },
+              {
+                nodeId: "job-node",
+                kind: "WorkflowJob",
+                label: "Lint",
+                path: candidate.path,
+                sourceType: "doc",
+              },
+              {
+                nodeId: "step-node",
+                kind: "WorkflowStep",
+                label: "Lint",
+                path: candidate.path,
+                sourceType: "doc",
+              },
+              {
+                nodeId: "task-node",
+                kind: "Task",
+                label: "lint",
+                path: candidate.path,
+                sourceType: "doc",
+              },
+              {
+                nodeId: "symbol-node",
+                kind: "Symbol",
+                label: "build",
+                path: candidate.path,
+                sourceType: "doc",
+              },
+            ],
+          }),
+        },
+      });
 
     await pipeline.run({ indexRunId: "run-graph", mode: "full" });
 
@@ -802,16 +1234,34 @@ describe("DefaultIngestionPipeline", () => {
     expect(canonicalUpsertSpy.mock.calls[0]?.[0]).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: "workflow", path: candidate.path }),
-        expect.objectContaining({ kind: "workspace_task", path: candidate.path }),
-        expect.objectContaining({ kind: "symbol_export", path: candidate.path }),
+        expect.objectContaining({
+          kind: "workspace_task",
+          path: candidate.path,
+        }),
+        expect.objectContaining({
+          kind: "symbol_export",
+          path: candidate.path,
+        }),
       ]),
     );
     expect(derivedUpsertSpy.mock.calls[0]?.[0]).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ kind: "workflow-contains-job", path: candidate.path }),
-        expect.objectContaining({ kind: "job-runs-step", path: candidate.path }),
-        expect.objectContaining({ kind: "task-runs-command", path: candidate.path }),
-        expect.objectContaining({ kind: "symbol-exported-from-file", path: candidate.path }),
+        expect.objectContaining({
+          kind: "workflow-contains-job",
+          path: candidate.path,
+        }),
+        expect.objectContaining({
+          kind: "job-runs-step",
+          path: candidate.path,
+        }),
+        expect.objectContaining({
+          kind: "task-runs-command",
+          path: candidate.path,
+        }),
+        expect.objectContaining({
+          kind: "symbol-exported-from-file",
+          path: candidate.path,
+        }),
       ]),
     );
     const projectedGraph = graphReplaceSpy.mock.calls[0][0] as {
@@ -822,13 +1272,25 @@ describe("DefaultIngestionPipeline", () => {
       expect.objectContaining({
         edges: expect.arrayContaining([
           expect.objectContaining({ kind: "REPRESENTS", path: candidate.path }),
-          expect.objectContaining({ kind: "workflow-contains-job", path: candidate.path }),
-          expect.objectContaining({ kind: "task-runs-command", path: candidate.path }),
+          expect.objectContaining({
+            kind: "workflow-contains-job",
+            path: candidate.path,
+          }),
+          expect.objectContaining({
+            kind: "task-runs-command",
+            path: candidate.path,
+          }),
         ]),
         nodes: expect.arrayContaining([
           expect.objectContaining({ kind: "Workflow", path: candidate.path }),
-          expect.objectContaining({ kind: "WorkflowJob", path: candidate.path }),
-          expect.objectContaining({ kind: "WorkflowStep", path: candidate.path }),
+          expect.objectContaining({
+            kind: "WorkflowJob",
+            path: candidate.path,
+          }),
+          expect.objectContaining({
+            kind: "WorkflowStep",
+            path: candidate.path,
+          }),
           expect.objectContaining({ kind: "Task", path: candidate.path }),
           expect.objectContaining({ kind: "Symbol", path: candidate.path }),
         ]),
@@ -850,7 +1312,9 @@ describe("DefaultIngestionPipeline", () => {
 
     const { pipeline, internalGraph } = createPipeline({
       scanner: {
-        scan: vi.fn().mockResolvedValue({ candidates: [candidate], skipped: [] }),
+        scan: vi
+          .fn()
+          .mockResolvedValue({ candidates: [candidate], skipped: [] }),
       },
       parser: {
         parse: vi.fn().mockResolvedValue(document),
@@ -859,9 +1323,11 @@ describe("DefaultIngestionPipeline", () => {
         chunk: vi.fn().mockResolvedValue([chunk]),
       },
       embedding: {
-        embedChunks: vi.fn().mockResolvedValue([
-          { evidenceId: "stable-evidence", vector: [1, 1, 1] },
-        ]),
+        embedChunks: vi
+          .fn()
+          .mockResolvedValue([
+            { evidenceId: "stable-evidence", vector: [1, 1, 1] },
+          ]),
       },
       structuredAnalyzers: [
         {
@@ -884,6 +1350,20 @@ describe("DefaultIngestionPipeline", () => {
           supports: vi.fn().mockReturnValue(true),
         },
       ],
+      graphProjector: {
+        project: vi.fn().mockReturnValue({
+          edges: [],
+          nodes: [
+            {
+              nodeId: expectedSymbolNodeId,
+              kind: "Symbol",
+              label: "stable",
+              path: candidate.path,
+              sourceType: "code",
+            },
+          ],
+        }),
+      },
     });
 
     await pipeline.run({ indexRunId: "run-stable", mode: "full" });

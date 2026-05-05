@@ -70,6 +70,7 @@ describe("SearchKnowledgeUseCase", () => {
     const embeddingPort = createEmbeddingPort();
     const retrieve = vi.fn().mockResolvedValue([
       {
+        artifactKind: "code",
         chunkKey: "chunk-1",
         content: `${"a".repeat(550)}tail`,
         contentHash: "hash-1",
@@ -122,6 +123,7 @@ describe("SearchKnowledgeUseCase", () => {
     expect(result).toEqual({
       results: [
         {
+          artifactKind: "code",
           codeLocation: {
             endLine: 20,
             startLine: 10,
@@ -206,6 +208,7 @@ describe("SearchKnowledgeUseCase", () => {
     const retrieverPort: RetrieverPort = {
       retrieve: vi.fn().mockResolvedValue([
         {
+          artifactKind: "code",
           chunkKey: "chunk-1",
           content: "export const a = 1;",
           contentHash: "hash-1",
@@ -249,6 +252,7 @@ describe("SearchKnowledgeUseCase", () => {
     const retrieverPort: RetrieverPort = {
       retrieve: vi.fn().mockResolvedValue([
         {
+          artifactKind: "doc",
           chunkKey: "chunk-1",
           content: "Architecture overview",
           contentHash: "hash-1",

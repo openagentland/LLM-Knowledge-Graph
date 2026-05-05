@@ -18,6 +18,8 @@ export type LkgConfig = {
   activeProjectIdentity: string;
   chunkTokenOverlap: number;
   configFingerprint: string;
+  daemonStartupTimeoutMs: number;
+  effectiveEmbeddingContextLength: number | null;
   embeddingBatchSize: number;
   embeddingContextLength: number | null;
   embeddingDimension: number | null;
@@ -58,6 +60,7 @@ const DEFAULT_EMBEDDING_THREADS = 1;
 const DEFAULT_INFERENCE_THREADS = 1;
 const DEFAULT_VECTOR_UPSERT_BATCH_SIZE = 100;
 const DEFAULT_INDEX_CHECKPOINT_EVERY_BATCHES = 1;
+const DEFAULT_DAEMON_STARTUP_TIMEOUT_MS = 20_000;
 const DEFAULT_EMBEDDING_TOKEN_MARGIN = 256;
 const DEFAULT_CHUNK_TOKEN_OVERLAP = 64;
 const DEFAULT_MAX_SPLIT_DEPTH = 4;
@@ -130,6 +133,8 @@ export function loadConfig(
     env.LKG_EMBEDDING_CONTEXT_LENGTH,
     "LKG_EMBEDDING_CONTEXT_LENGTH",
   );
+  const effectiveEmbeddingContextLength =
+    embeddingContextLength ?? resolvedLlamaCppModel.contextLength;
   const embeddingModel = resolveOptionalString(env.LKG_EMBEDDING_MODEL);
   const embeddingDimension = resolveOptionalPositiveInteger(
     env.LKG_EMBEDDING_DIM,
@@ -170,6 +175,11 @@ export function loadConfig(
     "LKG_EMBEDDING_TOKEN_MARGIN",
     DEFAULT_EMBEDDING_TOKEN_MARGIN,
   );
+  const daemonStartupTimeoutMs = resolvePositiveInteger(
+    env.LKG_DAEMON_STARTUP_TIMEOUT_MS,
+    "LKG_DAEMON_STARTUP_TIMEOUT_MS",
+    DEFAULT_DAEMON_STARTUP_TIMEOUT_MS,
+  );
   const maxChunkTokens = resolveOptionalPositiveInteger(
     env.LKG_MAX_CHUNK_TOKENS,
     "LKG_MAX_CHUNK_TOKENS",
@@ -189,7 +199,7 @@ export function loadConfig(
   );
 
   validateChunkingConfig({
-    embeddingContextLength,
+    embeddingContextLength: effectiveEmbeddingContextLength,
     embeddingTokenMargin,
     maxChunkTokens,
   });
@@ -202,6 +212,8 @@ export function loadConfig(
     .update(
       JSON.stringify({
         activeProjectIdentity,
+        daemonStartupTimeoutMs,
+        effectiveEmbeddingContextLength,
         embeddingBatchSize,
         embeddingContextLength,
         embeddingDimension,
@@ -238,6 +250,8 @@ export function loadConfig(
     activeProjectIdentity,
     chunkTokenOverlap,
     configFingerprint,
+    daemonStartupTimeoutMs,
+    effectiveEmbeddingContextLength,
     embeddingBatchSize,
     embeddingContextLength,
     embeddingDimension,
