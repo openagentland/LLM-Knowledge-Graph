@@ -1,3 +1,4 @@
+import { ERROR_CODES, LkgError } from "../../shared/errors/lkg-error.js";
 import {
   LLAMA_CPP_PRESETS,
   getPreset,
@@ -31,8 +32,13 @@ export function resolveLlamaCppModel(uri: string): ResolvedLlamaCppModel {
     const id = uri.slice(PRESET_PREFIX.length);
     const preset = getPreset(id);
     if (preset === undefined) {
-      throw new Error(
-        `Unknown llama.cpp preset "${id}". Available: ${Object.keys(LLAMA_CPP_PRESETS).join(", ")}`,
+      throw new LkgError(
+        ERROR_CODES.INVALID_INPUT,
+        `Unknown llama.cpp preset "${id}".`,
+        {
+          availablePresets: Object.keys(LLAMA_CPP_PRESETS),
+          preset: id,
+        },
       );
     }
     return {

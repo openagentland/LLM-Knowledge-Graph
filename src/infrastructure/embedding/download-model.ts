@@ -12,6 +12,7 @@ import { get as httpsGet } from "node:https";
 import { basename, extname, join } from "node:path";
 
 import type { LoggerPort } from "../../application/ports/logger-port.js";
+import { ERROR_CODES, LkgError } from "../../shared/errors/lkg-error.js";
 
 const MAX_REDIRECTS = 10;
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -107,7 +108,13 @@ function selectHttpClient(url: string): typeof httpsGet {
     return httpGet;
   }
 
-  throw new Error(`Unsupported model download protocol: ${protocol}`);
+  throw new LkgError(
+    ERROR_CODES.INVALID_INPUT,
+    "Unsupported model download protocol.",
+    {
+      protocol,
+    },
+  );
 }
 
 function downloadToPartial(

@@ -279,10 +279,8 @@ function createPipeline(options: {
     listByPath: vi.fn().mockResolvedValue({ edges: [], nodes: [] }),
     listEdgesByNode: vi.fn().mockResolvedValue([]),
     listNodesByPath: vi.fn().mockResolvedValue([]),
-    read: vi.fn().mockResolvedValue({ edges: [], nodes: [] }),
-    readOverlays: vi.fn().mockResolvedValue({ records: [] }),
-    replace: vi.fn().mockResolvedValue(undefined),
-    replaceOverlays: vi.fn().mockResolvedValue(undefined),
+    readSnapshot: vi.fn().mockResolvedValue({ edges: [], nodes: [] }),
+    replaceSnapshot: vi.fn().mockResolvedValue(undefined),
   };
   const overlayStore: OverlayStorePort = {
     clear: vi.fn().mockResolvedValue(undefined),
@@ -1229,7 +1227,7 @@ describe("DefaultIngestionPipeline", () => {
 
     const canonicalUpsertSpy = getMock(canonicalFacts.upsert);
     const derivedUpsertSpy = getMock(derivedFacts.upsert);
-    const graphReplaceSpy = getMock(internalGraph.replace);
+    const graphReplaceSpy = getMock(internalGraph.replaceSnapshot);
 
     expect(canonicalUpsertSpy.mock.calls[0]?.[0]).toEqual(
       expect.arrayContaining([
@@ -1368,7 +1366,7 @@ describe("DefaultIngestionPipeline", () => {
 
     await pipeline.run({ indexRunId: "run-stable", mode: "full" });
 
-    const graphReplaceSpy = getMock(internalGraph.replace);
+    const graphReplaceSpy = getMock(internalGraph.replaceSnapshot);
     const graph = graphReplaceSpy.mock.calls[0][0] as {
       nodes: Array<{ kind: string; nodeId: string; path: string }>;
     };

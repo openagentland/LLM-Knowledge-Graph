@@ -1,9 +1,10 @@
-import type { OverlaySnapshot } from "../dto/overlay.js";
 import type {
   PersistedInternalGraphEdgeRecord,
   PersistedInternalGraphNodeRecord,
   PersistedInternalGraphRecord,
 } from "../dto/structured-records.js";
+
+export type InternalGraphSnapshot = PersistedInternalGraphRecord;
 
 export interface InternalGraphStorePort {
   clear(): Promise<void>;
@@ -11,8 +12,6 @@ export interface InternalGraphStorePort {
   listByPath(path: string): Promise<PersistedInternalGraphRecord>;
   listEdgesByNode(nodeId: string): Promise<PersistedInternalGraphEdgeRecord[]>;
   listNodesByPath(path: string): Promise<PersistedInternalGraphNodeRecord[]>;
-  read(): Promise<PersistedInternalGraphRecord>;
-  readOverlays(): Promise<OverlaySnapshot>;
-  replace(records: PersistedInternalGraphRecord): Promise<void>;
-  replaceOverlays(snapshot: OverlaySnapshot): Promise<void>;
+  readSnapshot(): Promise<InternalGraphSnapshot>;
+  replaceSnapshot(snapshot: InternalGraphSnapshot): Promise<void>;
 }

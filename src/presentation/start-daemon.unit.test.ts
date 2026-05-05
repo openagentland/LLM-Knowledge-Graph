@@ -34,13 +34,16 @@ vi.mock("node:fs/promises", async () => {
   };
 });
 
-vi.mock("../main.js", () => ({
+vi.mock("../compose.js", () => ({
   composeDaemonHandler: composeDaemonHandlerMock,
   composeMainLogger: composeMainLoggerMock,
 }));
 
 import { startDaemon, startDaemonServer } from "./start-daemon.js";
-import type { DaemonRequestHandler } from "../application/daemon-request-handler.js";
+import type {
+  DaemonRequestHandler,
+  DaemonRuntimePort,
+} from "../application/daemon-request-handler.js";
 import { FileDaemonRegistry } from "../infrastructure/daemon/file-daemon-registry.js";
 import { ERROR_CODES, LkgError } from "../shared/errors/lkg-error.js";
 
@@ -56,6 +59,10 @@ type MockServer = EventEmitter & {
 };
 
 type HandleMock = ReturnType<typeof vi.fn<DaemonRequestHandler["handle"]>>;
+
+type MockRuntime = DaemonRuntimePort & {
+  close: ReturnType<typeof vi.fn>;
+};
 
 type MockSocketHandler = (socket: MockSocket) => void;
 
@@ -86,11 +93,16 @@ function createServer(): MockServer {
   return server;
 }
 
+function createRuntime(): MockRuntime {
+  return {
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 function createHandler(
   overrides: Partial<DaemonRequestHandler> = {},
 ): DaemonRequestHandler {
   return {
-    close: vi.fn().mockResolvedValue(undefined),
     handle: vi
       .fn()
       .mockResolvedValue({ runtimeState: "ready", type: "health.check" }),
@@ -114,6 +126,14 @@ describe("start-daemon", () => {
   });
 
   it("rejects when LKG_DAEMON_SOCKET_PATH is missing or blank", async () => {
+    const handler = createHandler();
+    const runtime = createRuntime();
+    composeMainLoggerMock.mockReturnValue({
+      config: { activeProjectIdentity: "project-a", homeDir: "/tmp/home" },
+      logger: createLogger(),
+    });
+    composeDaemonHandlerMock.mockReturnValue({ handler, runtime });
+
     delete process.env.LKG_DAEMON_SOCKET_PATH;
     await expect(startDaemon()).rejects.toThrow(
       "LKG_DAEMON_SOCKET_PATH is required for daemon mode.",
@@ -143,11 +163,13 @@ describe("start-daemon", () => {
     const handler = createHandler({
       handle: readinessHandle,
     });
+    const runtime = createRuntime();
 
     await expect(
       startDaemonServer({
         handler,
         logger,
+        runtime,
         socketPath: "/tmp/lkg.sock",
       }),
     ).rejects.toThrow(
@@ -185,10 +207,12 @@ describe("start-daemon", () => {
     const handler = createHandler({
       handle: lkgErrorHandle,
     });
+    const runtime = createRuntime();
 
     await startDaemonServer({
       handler,
       logger,
+      runtime,
       socketPath: "/tmp/lkg.sock",
     });
 
@@ -268,9 +292,9 @@ describe("start-daemon", () => {
           resolveClose = resolve;
         }),
     );
-    const handler = createHandler({
-      close: closeMock,
-    });
+    const handler = createHandler();
+    const runtime = createRuntime();
+    runtime.close = closeMock;
     const exitSpy = vi
       .spyOn(process, "exit")
       .mockImplementation((() => undefined) as never);
@@ -280,6 +304,7 @@ describe("start-daemon", () => {
       handler,
       homeDir,
       logger,
+      runtime,
       socketPath: "/tmp/lkg.sock",
     });
 
@@ -323,10 +348,12 @@ describe("start-daemon", () => {
     const handler = createHandler({
       handle: unknownErrorHandle,
     });
+    const runtime = createRuntime();
 
     await startDaemonServer({
       handler,
       logger,
+      runtime,
       socketPath: "/tmp/lkg.sock",
     });
 

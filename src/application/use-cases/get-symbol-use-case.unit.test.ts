@@ -58,7 +58,7 @@ function createDerivedFactStore(
 }
 
 function createInternalGraphStore(
-  graph: Awaited<ReturnType<InternalGraphStorePort["read"]>> = {
+  graph: Awaited<ReturnType<InternalGraphStorePort["readSnapshot"]>> = {
     edges: [],
     nodes: [],
   },
@@ -67,8 +67,10 @@ function createInternalGraphStore(
     clear: vi.fn(),
     deleteByPath: vi.fn(),
     listByPath: vi.fn().mockResolvedValue(graph),
-    read: vi.fn().mockResolvedValue(graph),
-    replace: vi.fn(),
+    listEdgesByNode: vi.fn().mockResolvedValue([]),
+    listNodesByPath: vi.fn().mockResolvedValue([]),
+    readSnapshot: vi.fn().mockResolvedValue(graph),
+    replaceSnapshot: vi.fn(),
   };
 }
 
@@ -232,10 +234,14 @@ describe("GetSymbolUseCase", () => {
       context,
     );
 
-    await expect(useCase.execute({ path: " ", symbol: "name" })).rejects.toMatchObject({
+    await expect(
+      useCase.execute({ path: " ", symbol: "name" }),
+    ).rejects.toMatchObject({
       code: ERROR_CODES.INVALID_INPUT,
     } satisfies Partial<LkgError>);
-    await expect(useCase.execute({ path: "main.ts", symbol: " " })).rejects.toMatchObject({
+    await expect(
+      useCase.execute({ path: "main.ts", symbol: " " }),
+    ).rejects.toMatchObject({
       code: ERROR_CODES.INVALID_INPUT,
     } satisfies Partial<LkgError>);
   });

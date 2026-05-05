@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createDaemonRequestHandler } from "../../src/application/daemon-request-handler.js";
+import {
+  createDaemonRequestHandler,
+  createDaemonRuntime,
+} from "../../src/application/daemon-request-handler.js";
 import type { StatusSnapshot } from "../../src/application/dto/index-lifecycle.js";
 import type { CanonicalFactStorePort } from "../../src/application/ports/canonical-fact-store-port.js";
 import type { DerivedFactStorePort } from "../../src/application/ports/derived-fact-store-port.js";
@@ -86,14 +89,22 @@ function createInternalGraphStore(): InternalGraphStorePort {
     listByPath: vi.fn().mockResolvedValue({ edges: [], nodes: [] }),
     listEdgesByNode: vi.fn().mockResolvedValue([]),
     listNodesByPath: vi.fn().mockResolvedValue([]),
-    read: vi.fn().mockResolvedValue({ edges: [], nodes: [] }),
-    replace: vi.fn(),
+    readSnapshot: vi.fn().mockResolvedValue({ edges: [], nodes: [] }),
+    replaceSnapshot: vi.fn(),
   };
 }
 
 describe("createDaemonRequestHandler", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("closes watcher runtime through daemon runtime wrapper", async () => {
+    const watcherRuntime = { close: vi.fn().mockResolvedValue(undefined) };
+
+    await createDaemonRuntime({ watcherRuntime }).close();
+
+    expect(watcherRuntime.close).toHaveBeenCalledTimes(1);
   });
 
   it("returns daemon health-check payload", async () => {
@@ -994,21 +1005,9 @@ describe("createDaemonRequestHandler", () => {
 
   it("closes watcher runtime when present", async () => {
     const close = vi.fn().mockResolvedValue(undefined);
-    const handler = createDaemonRequestHandler({
-      canonicalFactStore: createCanonicalFactStore(),
-      derivedFactStore: createDerivedFactStore(),
-      embedding: { embedChunks: vi.fn(), embedQuery: vi.fn() },
-      indexStatePort: createIndexStatePort(),
-      ingestionPipeline: { run: vi.fn() },
-      internalGraphStore: createInternalGraphStore(),
-      logger: createLogger(),
-      retriever: { retrieve: vi.fn() },
-      statusContext: createStatusContext(),
-      symbolCandidateStore: createSymbolCandidateStore(),
-      watcherRuntime: { close },
-    });
+    const runtime = createDaemonRuntime({ watcherRuntime: { close } });
 
-    await handler.close();
+    await runtime.close();
 
     expect(close).toHaveBeenCalledTimes(1);
   });

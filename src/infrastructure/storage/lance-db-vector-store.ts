@@ -59,9 +59,12 @@ export class LanceDbVectorStore implements VectorStorePort {
     }
 
     const rows = (await table.query().toArray()) as PersistedChunkRow[];
-    return rows
-      .map(toPersistedChunkRecord)
-      .sort((left, right) => left.chunkKey.localeCompare(right.chunkKey));
+    const records: PersistedChunkRecord[] = [];
+    for (const row of rows) {
+      records.push(toPersistedChunkRecord(row));
+    }
+    records.sort((left, right) => left.chunkKey.localeCompare(right.chunkKey));
+    return records;
   }
 
   async searchByEmbedding(
@@ -81,13 +84,7 @@ export class LanceDbVectorStore implements VectorStorePort {
       .search(queryEmbedding)
       .limit(topK)
       .toArray()) as PersistedChunkRow[];
-    return rows.map(
-      (row) =>
-        ({
-          ...toPersistedChunkRecord(row),
-          score: toRelevanceScore(row._distance),
-        }) satisfies RetrievedChunk,
-    );
+    return rows.map(toRetrievedChunk);
   }
 
   async upsert(records: PersistedChunkRecord[]): Promise<void> {
@@ -158,32 +155,6 @@ export class LanceDbVectorStore implements VectorStorePort {
   }
 }
 
-function toPersistedChunkRow(record: PersistedChunkRecord): PersistedChunkRow {
-  return {
-    artifactKind: record.artifactKind,
-    chunkKey: record.chunkKey,
-    content: record.content,
-    contentHash: record.contentHash,
-    embedding: record.embedding,
-    evidenceId: record.evidenceId,
-    extractor: record.extractor,
-    fileFingerprint: record.fileFingerprint,
-    indexRunId: record.indexRunId,
-    partitionId: record.partitionId,
-    partitionIndex: record.partitionIndex,
-    partitionStatus: record.partitionStatus,
-    partitionTotal: record.partitionTotal,
-    path: record.path,
-    sourceType: record.sourceType,
-    codeEndLine: record.codeLocation?.endLine ?? 0,
-    codeStartLine: record.codeLocation?.startLine ?? 0,
-    docOffset: record.docLocation?.offset ?? 0,
-    docSection: record.docLocation?.section ?? "",
-    hasCodeLocation: record.codeLocation !== undefined,
-    hasDocLocation: record.docLocation !== undefined,
-  };
-}
-
 function toPersistedChunkRecord(row: PersistedChunkRow): PersistedChunkRecord {
   return {
     artifactKind: row.artifactKind,
@@ -213,6 +184,63 @@ function toPersistedChunkRecord(row: PersistedChunkRow): PersistedChunkRecord {
           section: row.docSection.length > 0 ? row.docSection : undefined,
         }
       : undefined,
+  };
+}
+
+function toPersistedChunkRow(record: PersistedChunkRecord): PersistedChunkRow {
+  return {
+    artifactKind: record.artifactKind,
+    chunkKey: record.chunkKey,
+    content: record.content,
+    contentHash: record.contentHash,
+    embedding: record.embedding,
+    evidenceId: record.evidenceId,
+    extractor: record.extractor,
+    fileFingerprint: record.fileFingerprint,
+    indexRunId: record.indexRunId,
+    partitionId: record.partitionId,
+    partitionIndex: record.partitionIndex,
+    partitionStatus: record.partitionStatus,
+    partitionTotal: record.partitionTotal,
+    path: record.path,
+    sourceType: record.sourceType,
+    codeEndLine: record.codeLocation?.endLine ?? 0,
+    codeStartLine: record.codeLocation?.startLine ?? 0,
+    docOffset: record.docLocation?.offset ?? 0,
+    docSection: record.docLocation?.section ?? "",
+    hasCodeLocation: record.codeLocation !== undefined,
+    hasDocLocation: record.docLocation !== undefined,
+  };
+}
+
+function toRetrievedChunk(row: PersistedChunkRow): RetrievedChunk {
+  return {
+    artifactKind: row.artifactKind,
+    chunkKey: row.chunkKey,
+    content: row.content,
+    contentHash: row.contentHash,
+    evidenceId: row.evidenceId,
+    extractor: row.extractor,
+    indexRunId: row.indexRunId,
+    partitionId: row.partitionId,
+    partitionIndex: row.partitionIndex,
+    partitionStatus: row.partitionStatus,
+    partitionTotal: row.partitionTotal,
+    path: row.path,
+    sourceType: row.sourceType,
+    codeLocation: row.hasCodeLocation
+      ? {
+          endLine: row.codeEndLine,
+          startLine: row.codeStartLine,
+        }
+      : undefined,
+    docLocation: row.hasDocLocation
+      ? {
+          offset: row.docOffset > 0 ? row.docOffset : undefined,
+          section: row.docSection.length > 0 ? row.docSection : undefined,
+        }
+      : undefined,
+    score: toRelevanceScore(row._distance),
   };
 }
 

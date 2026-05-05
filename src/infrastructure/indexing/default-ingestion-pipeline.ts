@@ -1266,7 +1266,7 @@ async function persistStructuredData(options: {
     await options.canonicalFactStore.upsert(options.canonicalFacts);
     await options.derivedFactStore.upsert(options.derivedFacts);
     const [existingGraph, existingOverlays] = await Promise.all([
-      options.internalGraph.read(),
+      options.internalGraph.readSnapshot(),
       options.overlayStore.read(),
     ]);
     const projected = options.graphProjector.project({
@@ -1299,7 +1299,7 @@ async function persistStructuredData(options: {
       });
     }
     await Promise.all([
-      options.internalGraph.replace({
+      options.internalGraph.replaceSnapshot({
         edges: [
           ...existingGraph.edges.filter(
             (edge) => edge.path !== options.documentPath,

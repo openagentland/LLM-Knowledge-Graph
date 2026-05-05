@@ -143,8 +143,9 @@ describe("FallbackParser", () => {
       ]),
     );
 
-    await expect(parser.parse(candidate)).rejects.toThrow(
-      `Failed to parse all partitions for ${candidate.path}.`,
-    );
+    await expect(parser.parse(candidate)).rejects.toMatchObject({
+      code: "INTERNAL_ERROR",
+      message: "Failed to parse all partitions for candidate.",
+    });
   });
 });

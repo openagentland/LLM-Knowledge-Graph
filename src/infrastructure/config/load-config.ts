@@ -14,6 +14,9 @@ import type {
 } from "../../application/dto/index-lifecycle.js";
 import { ERROR_CODES, LkgError } from "../../shared/errors/lkg-error.js";
 
+export type VectorDbProvider = "lancedb";
+export type EmbeddingProvider = "llama_cpp";
+
 export type LkgConfig = {
   activeProjectIdentity: string;
   chunkTokenOverlap: number;
@@ -24,7 +27,7 @@ export type LkgConfig = {
   embeddingContextLength: number | null;
   embeddingDimension: number | null;
   embeddingModel: string | null;
-  embeddingProvider: "llama_cpp";
+  embeddingProvider: EmbeddingProvider;
   embeddingThreads: number;
   embeddingTokenMargin: number;
   fileScanBatchSize: number;
@@ -44,7 +47,7 @@ export type LkgConfig = {
   maxSplitDepth: number;
   oversizedSegmentPolicy: "split" | "skip";
   resolvedLlamaCppModel: ResolvedLlamaCppModel;
-  vectorDbProvider: "lancedb";
+  vectorDbProvider: VectorDbProvider;
   vectorDbUri: string;
   vectorUpsertBatchSize: number;
   watcherState: WatcherState;
@@ -67,8 +70,10 @@ const DEFAULT_MAX_SPLIT_DEPTH = 4;
 const LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);
 const LOG_MODES = new Set(["file", "std"]);
 const OVERSIZED_SEGMENT_POLICIES = new Set(["split", "skip"]);
-const SUPPORTED_VECTORDB_PROVIDER = "lancedb";
-const SUPPORTED_EMBEDDING_PROVIDER = "llama_cpp";
+const SUPPORTED_VECTORDB_PROVIDERS: readonly VectorDbProvider[] = ["lancedb"];
+const SUPPORTED_EMBEDDING_PROVIDERS: readonly EmbeddingProvider[] = [
+  "llama_cpp",
+];
 const DEFAULT_LLAMA_CPP_URI = "preset:nomic-v1.5-q8";
 
 export function loadConfig(
@@ -108,7 +113,7 @@ export function loadConfig(
   const vectorDbProvider = resolveProvider({
     envName: "LKG_VECTORDB_PROVIDER",
     kind: "vector database",
-    supportedProvider: SUPPORTED_VECTORDB_PROVIDER,
+    supportedProviders: SUPPORTED_VECTORDB_PROVIDERS,
     value: env.LKG_VECTORDB_PROVIDER,
   });
   const vectorDbUri = resolveConfiguredPath({
@@ -119,7 +124,7 @@ export function loadConfig(
   const embeddingProvider = resolveProvider({
     envName: "LKG_EMBEDDING_PROVIDER",
     kind: "embedding",
-    supportedProvider: SUPPORTED_EMBEDDING_PROVIDER,
+    supportedProviders: SUPPORTED_EMBEDDING_PROVIDERS,
     value: env.LKG_EMBEDDING_PROVIDER,
   });
   const llamaCppUri =
@@ -466,19 +471,19 @@ function resolveConfiguredPath(options: {
   return resolve(options.cwd, candidate);
 }
 
-function resolveProvider<TProvider extends "lancedb" | "llama_cpp">(options: {
+function resolveProvider<TProvider extends string>(options: {
   envName: string;
   kind: string;
-  supportedProvider: TProvider;
+  supportedProviders: readonly TProvider[];
   value: string | undefined;
 }): TProvider {
   const candidate = resolveNonEmptyString(options.value);
   if (candidate === null) {
-    return options.supportedProvider;
+    return options.supportedProviders[0];
   }
 
-  if (candidate === options.supportedProvider) {
-    return options.supportedProvider;
+  if (options.supportedProviders.includes(candidate as TProvider)) {
+    return candidate as TProvider;
   }
 
   throw new LkgError(
@@ -486,7 +491,7 @@ function resolveProvider<TProvider extends "lancedb" | "llama_cpp">(options: {
     `Unsupported ${options.kind} provider for ${options.envName}.`,
     {
       provider: candidate,
-      supportedProvider: options.supportedProvider,
+      supportedProviders: options.supportedProviders,
     },
   );
 }

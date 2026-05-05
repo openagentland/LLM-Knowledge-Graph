@@ -21,9 +21,22 @@ import { TraceFlowUseCase } from "./use-cases/trace-flow-use-case.js";
 import { ERROR_CODES, LkgError } from "../shared/errors/lkg-error.js";
 
 export type DaemonRequestHandler = {
-  close(): Promise<void>;
   handle(request: DaemonRequest): Promise<DaemonResponse>;
 };
+
+export type DaemonRuntimePort = {
+  close(): Promise<void>;
+};
+
+export function createDaemonRuntime(options: {
+  watcherRuntime?: DaemonRuntimePort | null;
+}): DaemonRuntimePort {
+  return {
+    async close(): Promise<void> {
+      await options.watcherRuntime?.close();
+    },
+  };
+}
 
 export function createDaemonRequestHandler(dependencies: {
   canonicalFactStore: CanonicalFactStorePort;
@@ -41,14 +54,8 @@ export function createDaemonRequestHandler(dependencies: {
     watcherState: StatusSnapshot["watcherState"];
   };
   symbolCandidateStore: SymbolCandidateStorePort;
-  watcherRuntime?: {
-    close(): Promise<void>;
-  } | null;
 }): DaemonRequestHandler {
   return {
-    async close(): Promise<void> {
-      await dependencies.watcherRuntime?.close();
-    },
     async handle(request: DaemonRequest): Promise<DaemonResponse> {
       switch (request.type) {
         case "health.check": {

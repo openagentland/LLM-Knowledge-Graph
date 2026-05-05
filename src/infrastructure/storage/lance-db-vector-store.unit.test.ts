@@ -122,6 +122,8 @@ describe("LanceDbVectorStore", () => {
       path: "src/a.ts",
       sourceType: "code",
     });
+    expect(results[0]).not.toHaveProperty("embedding");
+    expect(results[0]).not.toHaveProperty("fileFingerprint");
     expect(results[1]).toMatchObject({
       codeLocation: { startLine: 2, endLine: 2 },
       path: "src/b.ts",

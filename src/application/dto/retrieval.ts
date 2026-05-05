@@ -1,4 +1,4 @@
-import type { PersistedChunkRecord } from "./storage.js";
+import type { ArtifactKind, PartitionStatus, SourceType } from "./storage.js";
 
 export type RetrievalQuery = {
   query?: string;
@@ -6,6 +6,27 @@ export type RetrievalQuery = {
   topK: number;
 };
 
-export type RetrievedChunk = PersistedChunkRecord & {
+export type RetrievedChunk = {
+  artifactKind: ArtifactKind;
+  chunkKey: string;
+  codeLocation?: {
+    endLine: number;
+    startLine: number;
+  };
+  content: string;
+  contentHash: string;
+  docLocation?: {
+    offset?: number;
+    section?: string;
+  };
+  evidenceId: string;
+  extractor: string;
+  indexRunId: string;
+  partitionId?: string;
+  partitionIndex?: number;
+  partitionStatus?: PartitionStatus;
+  partitionTotal?: number;
+  path: string;
   score: number;
+  sourceType: SourceType;
 };

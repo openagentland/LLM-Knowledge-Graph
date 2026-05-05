@@ -56,8 +56,8 @@ function createInternalGraphStore(
       .mockImplementation((path: string) =>
         Promise.resolve(graph.nodes.filter((node) => node.path === path)),
       ),
-    read: vi.fn().mockResolvedValue(graph),
-    replace: vi.fn(),
+    readSnapshot: vi.fn().mockResolvedValue(graph),
+    replaceSnapshot: vi.fn(),
   };
 }
 

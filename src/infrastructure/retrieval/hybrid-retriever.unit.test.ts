@@ -1,63 +1,42 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { RetrievedChunk } from "../../application/dto/retrieval.js";
-import type { PersistedChunkRecord } from "../../application/dto/storage.js";
 import type { EmbeddingPort } from "../../application/ports/embedding-port.js";
 import type { VectorStorePort } from "../../application/ports/vector-store-port.js";
 import { HybridRetriever } from "../../infrastructure/retrieval/hybrid-retriever.js";
-
-function createRecord(
-  overrides: Partial<PersistedChunkRecord> &
-    Pick<
-      PersistedChunkRecord,
-      | "artifactKind"
-      | "chunkKey"
-      | "content"
-      | "embedding"
-      | "evidenceId"
-      | "extractor"
-      | "fileFingerprint"
-      | "indexRunId"
-      | "path"
-      | "sourceType"
-    >,
-): PersistedChunkRecord {
-  return {
-    artifactKind: overrides.artifactKind,
-    chunkKey: overrides.chunkKey,
-    content: overrides.content,
-    contentHash: overrides.contentHash ?? `${overrides.chunkKey}-hash`,
-    embedding: overrides.embedding,
-    evidenceId: overrides.evidenceId,
-    extractor: overrides.extractor,
-    fileFingerprint: overrides.fileFingerprint,
-    indexRunId: overrides.indexRunId,
-    path: overrides.path,
-    sourceType: overrides.sourceType,
-    codeLocation: overrides.codeLocation,
-    docLocation: overrides.docLocation,
-  };
-}
 
 function createRetrievedChunk(
   overrides: Partial<RetrievedChunk> &
     Pick<
       RetrievedChunk,
+      | "artifactKind"
       | "chunkKey"
       | "content"
-      | "embedding"
       | "evidenceId"
       | "extractor"
-      | "fileFingerprint"
       | "indexRunId"
       | "path"
-      | "sourceType"
       | "score"
+      | "sourceType"
     >,
 ): RetrievedChunk {
   return {
-    ...createRecord(overrides),
+    artifactKind: overrides.artifactKind,
+    chunkKey: overrides.chunkKey,
+    content: overrides.content,
+    contentHash: overrides.contentHash ?? `${overrides.chunkKey}-hash`,
+    evidenceId: overrides.evidenceId,
+    extractor: overrides.extractor,
+    indexRunId: overrides.indexRunId,
+    path: overrides.path,
     score: overrides.score,
+    sourceType: overrides.sourceType,
+    codeLocation: overrides.codeLocation,
+    docLocation: overrides.docLocation,
+    partitionId: overrides.partitionId,
+    partitionIndex: overrides.partitionIndex,
+    partitionStatus: overrides.partitionStatus,
+    partitionTotal: overrides.partitionTotal,
   };
 }
 
@@ -73,10 +52,8 @@ describe("HybridRetriever", () => {
         artifactKind: "code",
         chunkKey: "chunk-a",
         content: "totally unrelated words",
-        embedding: [1, 0],
         evidenceId: "e1",
         extractor: "test",
-        fileFingerprint: "fp1",
         indexRunId: "run1",
         path: "b.ts",
         sourceType: "code",
@@ -145,10 +122,8 @@ describe("HybridRetriever", () => {
         artifactKind: "code",
         chunkKey: "chunk-b",
         content: "beta",
-        embedding: [1, 0],
         evidenceId: "e2",
         extractor: "test",
-        fileFingerprint: "fp2",
         indexRunId: "run1",
         path: "b.ts",
         sourceType: "code",
@@ -158,10 +133,8 @@ describe("HybridRetriever", () => {
         artifactKind: "code",
         chunkKey: "chunk-a",
         content: "alpha",
-        embedding: [1, 0],
         evidenceId: "e1",
         extractor: "test",
-        fileFingerprint: "fp1",
         indexRunId: "run1",
         path: "a.ts",
         sourceType: "code",
@@ -211,10 +184,8 @@ describe("HybridRetriever", () => {
         artifactKind: "code",
         chunkKey: "chunk-code",
         content: "shared evidence implementation",
-        embedding: [1, 0],
         evidenceId: "e-code",
         extractor: "test",
-        fileFingerprint: "fp-code",
         indexRunId: "run1",
         path: "src/main.ts",
         sourceType: "code",
@@ -224,10 +195,8 @@ describe("HybridRetriever", () => {
         artifactKind: "workflow",
         chunkKey: "chunk-workflow",
         content: "shared evidence workflow",
-        embedding: [1, 0],
         evidenceId: "e-workflow",
         extractor: "test",
-        fileFingerprint: "fp-workflow",
         indexRunId: "run1",
         path: ".github/workflows/ci.yml",
         sourceType: "doc",
@@ -237,10 +206,8 @@ describe("HybridRetriever", () => {
         artifactKind: "doc",
         chunkKey: "chunk-doc",
         content: "shared evidence docs",
-        embedding: [1, 0],
         evidenceId: "e-doc",
         extractor: "test",
-        fileFingerprint: "fp-doc",
         indexRunId: "run1",
         path: "README.md",
         sourceType: "doc",
@@ -280,10 +247,8 @@ describe("HybridRetriever", () => {
         artifactKind: "workflow",
         chunkKey: "chunk-b",
         content: "workflow evidence",
-        embedding: [1, 0],
         evidenceId: "e-workflow",
         extractor: "test",
-        fileFingerprint: "fp-workflow",
         indexRunId: "run1",
         path: ".github/workflows/ci.yml",
         sourceType: "doc",
@@ -293,10 +258,8 @@ describe("HybridRetriever", () => {
         artifactKind: "doc",
         chunkKey: "chunk-a",
         content: "doc evidence",
-        embedding: [1, 0],
         evidenceId: "e-doc",
         extractor: "test",
-        fileFingerprint: "fp-doc",
         indexRunId: "run1",
         path: "README.md",
         sourceType: "doc",

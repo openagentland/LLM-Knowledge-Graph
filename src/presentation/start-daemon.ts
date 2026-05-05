@@ -4,14 +4,17 @@ import { createServer } from "node:net";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { DaemonRequestHandler } from "../application/daemon-request-handler.js";
+import type {
+  DaemonRequestHandler,
+  DaemonRuntimePort,
+} from "../application/daemon-request-handler.js";
 import type {
   DaemonRequest,
   DaemonResponse,
 } from "../application/dto/daemon.js";
 import type { LoggerPort } from "../application/ports/logger-port.js";
+import { composeDaemonHandler, composeMainLogger } from "../compose.js";
 import { FileDaemonRegistry } from "../infrastructure/daemon/file-daemon-registry.js";
-import { composeDaemonHandler, composeMainLogger } from "../main.js";
 import { ERROR_CODES, LkgError } from "../shared/errors/lkg-error.js";
 
 type DaemonWireResponse =
@@ -36,13 +39,14 @@ export async function startDaemon(): Promise<void> {
 
   const cwd = process.cwd();
   const { config, logger } = composeMainLogger({ cwd });
-  const handler = composeDaemonHandler({ cwd, logger });
+  const { handler, runtime } = composeDaemonHandler({ cwd, logger });
 
   await startDaemonServer({
     activeProjectIdentity: config.activeProjectIdentity,
     handler,
     homeDir: config.homeDir,
     logger,
+    runtime,
     socketPath,
   });
 }
@@ -52,6 +56,7 @@ export async function startDaemonServer(options: {
   handler: DaemonRequestHandler;
   homeDir?: string;
   logger: LoggerPort;
+  runtime?: DaemonRuntimePort;
   socketPath: string;
 }): Promise<void> {
   await mkdir(dirname(options.socketPath), { recursive: true });
@@ -115,7 +120,7 @@ export async function startDaemonServer(options: {
       socketPath: options.socketPath,
     });
     server.close();
-    await options.handler.close();
+    await options.runtime?.close();
     await cleanupRuntimeArtifacts();
     process.exit(0);
   };

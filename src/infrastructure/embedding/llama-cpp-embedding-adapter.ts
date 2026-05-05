@@ -10,6 +10,7 @@ import type {
   EmbeddingResult,
 } from "../../application/ports/embedding-port.js";
 import type { LoggerPort } from "../../application/ports/logger-port.js";
+import { ERROR_CODES, LkgError } from "../../shared/errors/lkg-error.js";
 import type { ResolvedLlamaCppModel } from "../config/resolve-llama-cpp-model.js";
 
 type LlamaVector = Iterable<number> | ArrayLike<number>;
@@ -67,9 +68,13 @@ export class LlamaCppEmbeddingAdapter implements EmbeddingPort {
       return this.options.resolvedModel.dimension;
     }
 
-    throw new Error(
-      "Embedding dimension is required when using a custom model URL or local path. " +
-        "Set LKG_EMBEDDING_DIM to specify the dimension.",
+    throw new LkgError(
+      ERROR_CODES.INVALID_INPUT,
+      "Embedding dimension is required when using a custom model URL or local path.",
+      {
+        modelType: this.options.resolvedModel.type,
+        setting: "LKG_EMBEDDING_DIM",
+      },
     );
   }
 

@@ -25,6 +25,7 @@ import type {
   StructuralCodeBlock,
 } from "../../application/dto/ingestion.js";
 import type { ParserPort } from "../../application/ports/parser-port.js";
+import { ERROR_CODES, LkgError } from "../../shared/errors/lkg-error.js";
 
 const dynamicLanguagesRegistered = registerLanguages();
 const DEFAULT_PARTITION_MAX_CHARS = 8_000;
@@ -85,7 +86,13 @@ export class FallbackParser implements ParserPort {
         return degradedDocument;
       }
 
-      throw new Error(`Failed to parse all partitions for ${candidate.path}.`);
+      throw new LkgError(
+        ERROR_CODES.INTERNAL_ERROR,
+        "Failed to parse all partitions for candidate.",
+        {
+          path: candidate.path,
+        },
+      );
     }
 
     const reconciledPartitions = reconcilePartitions(
