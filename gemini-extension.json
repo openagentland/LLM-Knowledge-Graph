@@ -1,11 +1,14 @@
 {
   "name": "lkg",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "contextFileName": "GEMINI.md",
   "mcpServers": {
     "lkg": {
       "command": "npx",
-      "args": ["-y", "@openagentland/lkg"]
+      "args": [
+        "-y",
+        "@openagentland/lkg"
+      ]
     }
   }
 }

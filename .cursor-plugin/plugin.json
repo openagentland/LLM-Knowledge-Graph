@@ -1,6 +1,6 @@
 {
   "name": "llm-knowledge-graph",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Codebase intelligence — semantic search, symbol inspection, and bounded repository analysis for LLM-Knowledge-Graph",
   "author": {
     "name": "John Martin",

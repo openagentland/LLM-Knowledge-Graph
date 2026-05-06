@@ -1,6 +1,6 @@
 {
   "name": "@openagentland/lkg",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "The Agnostic Intelligence Layer for Repositories. Build LLM-powered Knowledge Graphs to unify Codebase & Documentation. Local-first, Enterprise-grade, and Infrastructure-agnostic (Ollama, Qdrant, LanceDB). Move beyond RAG to true Repository Intelligence.",
   "license": "MIT",
   "repository": {
