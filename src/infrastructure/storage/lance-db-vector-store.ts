@@ -92,17 +92,26 @@ export class LanceDbVectorStore implements VectorStorePort {
       return;
     }
 
+    const rows = records.map(toPersistedChunkRow);
     const existingTable = await this.getExistingTable();
     if (existingTable === null) {
       await this.getOrCreateTable(records);
       return;
     }
 
-    await existingTable
-      .mergeInsert("chunkKey")
-      .whenMatchedUpdateAll()
-      .whenNotMatchedInsertAll()
-      .execute(records.map(toPersistedChunkRow));
+    try {
+      await existingTable
+        .mergeInsert("chunkKey")
+        .whenMatchedUpdateAll()
+        .whenNotMatchedInsertAll()
+        .execute(rows);
+    } catch (error) {
+      if (!(await this.shouldRecreateTable(error))) {
+        throw error;
+      }
+
+      await this.recreateTable(rows);
+    }
   }
 
   private async getConnection(): Promise<Connection> {
@@ -136,15 +145,38 @@ export class LanceDbVectorStore implements VectorStorePort {
       return existingTable;
     }
 
+    const rows = records.map(toPersistedChunkRow);
+    return this.recreateTable(rows, { dropExisting: false });
+  }
+
+  private async recreateTable(
+    rows: PersistedChunkRow[],
+    options: { dropExisting?: boolean } = {},
+  ): Promise<Table> {
     const connection = await this.getConnection();
     const tableName = this.resolveTableName();
-    const rows = records.map(toPersistedChunkRow);
+    if (options.dropExisting !== false) {
+      await connection.dropTable(tableName);
+    }
     this.tablePromise = connection.createTable(tableName, rows, {
-      existOk: true,
-      mode: "create",
+      mode: "overwrite",
     });
 
     return this.tablePromise;
+  }
+
+  private async shouldRecreateTable(error: unknown): Promise<boolean> {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/artifactKind|schema|Arrow|column/i.test(message)) {
+      return false;
+    }
+
+    const existingTable = await this.getExistingTable();
+    if (existingTable === null) {
+      return false;
+    }
+
+    return true;
   }
 
   private resolveTableName(): string {

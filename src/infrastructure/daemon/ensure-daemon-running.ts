@@ -1,11 +1,14 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, rm } from "node:fs/promises";
 import { dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  createDaemonRegistration,
   FileDaemonRegistry,
+  isDaemonLeaseExpired,
   type DaemonRegistration,
 } from "./file-daemon-registry.js";
 import { SocketDaemonClient } from "./socket-daemon-client.js";
@@ -24,6 +27,24 @@ export async function ensureDaemonRunning(options: {
   startupTimeoutMs?: number;
 }): Promise<{ socketPath: string }> {
   const registry = new FileDaemonRegistry({ homeDir: options.config.homeDir });
+
+  return registry.acquireStartupLock(
+    options.config.activeProjectIdentity,
+    async () => ensureDaemonRunningWithLock(options, registry),
+  );
+}
+
+async function ensureDaemonRunningWithLock(
+  options: {
+    config: LkgConfig;
+    cwd: string;
+    logger: LoggerPort;
+    pathExists?: (path: string) => Promise<boolean>;
+    pollIntervalMs?: number;
+    startupTimeoutMs?: number;
+  },
+  registry: FileDaemonRegistry,
+): Promise<{ socketPath: string }> {
   const socketPath = registry.resolveSocketPath(
     options.config.activeProjectIdentity,
   );
@@ -36,10 +57,13 @@ export async function ensureDaemonRunning(options: {
     const matchesCurrentFingerprint =
       existing.configFingerprint === options.config.configFingerprint;
 
+    const existingLeaseExpired = isDaemonLeaseExpired(existing);
+
     if (
       matchesCurrentFingerprint &&
       matchesCurrentSocket &&
-      existingSocketExists
+      existingSocketExists &&
+      !existingLeaseExpired
     ) {
       const daemonClient = new SocketDaemonClient({ socketPath });
       if (await daemonClient.isHealthy()) {
@@ -65,15 +89,18 @@ export async function ensureDaemonRunning(options: {
       await recoverStaleDaemon({
         activeProjectIdentity: options.config.activeProjectIdentity,
         allowProcessTermination:
-          matchesCurrentSocket &&
-          matchesCurrentFingerprint &&
-          !existingSocketExists,
+          existingLeaseExpired ||
+          (matchesCurrentSocket &&
+            matchesCurrentFingerprint &&
+            !existingSocketExists),
         logger: options.logger,
-        reason: classifyExistingDaemonMismatch({
-          existingSocketExists,
-          matchesCurrentFingerprint,
-          matchesCurrentSocket,
-        }),
+        reason: existingLeaseExpired
+          ? "expired_lease"
+          : classifyExistingDaemonMismatch({
+              existingSocketExists,
+              matchesCurrentFingerprint,
+              matchesCurrentSocket,
+            }),
         registration: existing,
         registry,
         socketPath: existing.socketPath,
@@ -103,6 +130,7 @@ async function startDaemonAndWait(options: {
   startupTimeoutMs: number;
 }): Promise<{ socketPath: string }> {
   const daemonCommand = resolveDaemonCommand();
+  const daemonId = randomUUID();
   const child = spawn(daemonCommand.command, daemonCommand.args, {
     cwd: options.cwd,
     detached: true,
@@ -110,18 +138,19 @@ async function startDaemonAndWait(options: {
       ...process.env,
       LKG_ACTIVE_PROJECT_IDENTITY: options.config.activeProjectIdentity,
       LKG_CONFIG_FINGERPRINT: options.config.configFingerprint,
+      LKG_DAEMON_ID: daemonId,
       LKG_DAEMON_SOCKET_PATH: options.socketPath,
     },
     stdio: ["ignore", "ignore", "inherit"],
   });
   child.unref();
 
-  const registration: DaemonRegistration = {
+  const registration = createDaemonRegistration({
     configFingerprint: options.config.configFingerprint,
+    daemonId,
     pid: child.pid ?? -1,
     socketPath: options.socketPath,
-    startedAt: new Date().toISOString(),
-  };
+  });
 
   await options.registry.write(
     options.config.activeProjectIdentity,
@@ -142,6 +171,19 @@ async function startDaemonAndWait(options: {
 
   while (Date.now() < deadline) {
     if (await daemonClient.isHealthy()) {
+      const published = await options.registry.read(
+        options.config.activeProjectIdentity,
+      );
+      if (published?.daemonId !== registration.daemonId) {
+        options.logger.info("Reused daemon published during startup wait", {
+          activeProjectIdentity: options.config.activeProjectIdentity,
+          event: "daemon.startup_converged",
+          pid: published?.pid,
+          socketPath: options.socketPath,
+        });
+        return { socketPath: published?.socketPath ?? options.socketPath };
+      }
+
       options.logger.info("Confirmed LKG daemon readiness", {
         activeProjectIdentity: options.config.activeProjectIdentity,
         event: "daemon.ready_confirmed",
@@ -160,6 +202,7 @@ async function startDaemonAndWait(options: {
     logger: options.logger,
     reason: "startup_timeout",
     registration,
+    daemonId: registration.daemonId,
     registry: options.registry,
     socketPath: options.socketPath,
   });
@@ -177,6 +220,7 @@ async function startDaemonAndWait(options: {
 async function recoverStaleDaemon(options: {
   activeProjectIdentity: string;
   allowProcessTermination: boolean;
+  daemonId?: string;
   logger: LoggerPort;
   reason: string;
   registration: DaemonRegistration | null;
@@ -193,6 +237,7 @@ async function recoverStaleDaemon(options: {
 
   await removeStaleDaemonState({
     activeProjectIdentity: options.activeProjectIdentity,
+    daemonId: options.daemonId ?? options.registration?.daemonId,
     logger: options.logger,
     reason: options.reason,
     registry: options.registry,
@@ -248,13 +293,21 @@ function terminateDaemonProcess(options: {
 
 async function removeStaleDaemonState(options: {
   activeProjectIdentity: string;
+  daemonId: string | undefined;
   logger: LoggerPort;
   reason: string;
   registry: FileDaemonRegistry;
   socketPath: string;
   terminatedPid: number | null;
 }): Promise<void> {
-  await options.registry.delete(options.activeProjectIdentity);
+  if (options.daemonId === undefined) {
+    await options.registry.delete(options.activeProjectIdentity);
+  } else {
+    await options.registry.deleteIfOwned(
+      options.activeProjectIdentity,
+      options.daemonId,
+    );
+  }
   await safeRm(options.socketPath);
   const logMethod =
     options.reason === "missing_socket" ||

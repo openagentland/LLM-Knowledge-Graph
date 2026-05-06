@@ -3,16 +3,22 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { IndexStatePort } from "../../src/application/ports/index-state-port.js";
+import { RunIndexUseCase } from "../../src/application/use-cases/run-index-use-case.js";
 import { SearchKnowledgeUseCase } from "../../src/application/use-cases/search-knowledge-use-case.js";
 import { HybridRetriever } from "../../src/infrastructure/retrieval/hybrid-retriever.js";
 import { DeterministicEmbedding } from "../helpers/deterministic-embedding.js";
 import {
+  createIndexStateRepository,
   createIntegrationPipeline,
   createTempHomeDir,
+  createTestLogger,
   createVectorStore,
   TEST_SCOPE,
 } from "../helpers/integration-runtime.js";
 import { materializeFixtureProject } from "../helpers/materialize-fixture-project.js";
+
+const numberMatcher = expect.any(Number) as number;
+const stringMatcher = expect.any(String) as string;
 
 function createNotReadyStatePort(): IndexStatePort {
   const notUsed = (): never => {
@@ -95,29 +101,90 @@ describe("Search knowledge integration", () => {
     expect(new Set(results.map((result) => result.chunkKey)).size).toBe(
       results.length,
     );
-    expect(codeResult).toBeDefined();
-    expect(docResult).toBeDefined();
 
-    expect(codeResult?.sourceType).toBe("code");
-    expect(codeResult?.path).toEqual(expect.any(String));
-    expect(codeResult?.evidenceId).toEqual(expect.any(String));
-    expect(codeResult?.contentHash).toEqual(expect.any(String));
-    expect(codeResult?.extractor).toEqual(expect.any(String));
-    expect(codeResult?.indexRunId).toEqual(expect.any(String));
-    expect(codeResult?.score).toEqual(expect.any(Number));
-    expect(codeResult?.codeLocation?.startLine).toEqual(expect.any(Number));
-    expect(codeResult?.codeLocation?.endLine).toEqual(expect.any(Number));
+    expect(codeResult).toMatchObject({
+      artifactKind: "code",
+      codeLocation: {
+        endLine: numberMatcher,
+        startLine: numberMatcher,
+      },
+      contentHash: stringMatcher,
+      evidenceId: stringMatcher,
+      extractor: stringMatcher,
+      indexRunId: stringMatcher,
+      path: "main.ts",
+      score: numberMatcher,
+      sourceType: "code",
+    });
     expect(codeResult?.docLocation).toBeUndefined();
 
-    expect(docResult?.sourceType).toBe("doc");
-    expect(docResult?.path).toEqual(expect.any(String));
-    expect(docResult?.evidenceId).toEqual(expect.any(String));
-    expect(docResult?.contentHash).toEqual(expect.any(String));
-    expect(docResult?.extractor).toEqual(expect.any(String));
-    expect(docResult?.indexRunId).toEqual(expect.any(String));
-    expect(docResult?.score).toEqual(expect.any(Number));
-    expect(docResult?.docLocation?.section).toEqual(expect.any(String));
+    expect(docResult).toMatchObject({
+      artifactKind: "doc",
+      contentHash: stringMatcher,
+      docLocation: {
+        section: stringMatcher,
+      },
+      evidenceId: stringMatcher,
+      extractor: stringMatcher,
+      indexRunId: stringMatcher,
+      path: "README.md",
+      score: numberMatcher,
+      sourceType: "doc",
+    });
     expect(docResult?.codeLocation).toBeUndefined();
+  });
+
+  it("keeps the search use-case contract aligned with persisted readiness state", async () => {
+    const cwd = await materializeFixtureProject("ingestion-basic");
+    const homeDir = await createTempHomeDir("lkg-search-use-case-");
+    const repository = createIndexStateRepository(homeDir);
+    const context = {
+      activeProjectIdentity: TEST_SCOPE.activeProjectIdentity,
+      configFingerprint: "fingerprint-a",
+      indexScope: TEST_SCOPE.indexScope,
+      watcherState: "disabled" as const,
+    };
+    const pipeline = createIntegrationPipeline(cwd, homeDir);
+    const embedding = new DeterministicEmbedding();
+    const retriever = new HybridRetriever(
+      embedding,
+      createVectorStore(homeDir),
+    );
+    const useCase = new SearchKnowledgeUseCase(
+      repository,
+      embedding,
+      retriever,
+      TEST_SCOPE,
+    );
+
+    await expect(
+      useCase.execute({ query: "Hello docs" }),
+    ).rejects.toMatchObject({
+      code: "INDEX_NOT_READY",
+    });
+
+    await new RunIndexUseCase(
+      repository,
+      pipeline,
+      createTestLogger(),
+      context,
+    ).execute({ mode: "full" });
+
+    const result = await useCase.execute({ query: "Hello docs", topK: 5 });
+    const topPaths = result.results.map((entry) => entry.path);
+
+    expect(topPaths).toContain("README.md");
+    expect(result.results[0]).toMatchObject({
+      evidenceId: stringMatcher,
+      path: stringMatcher,
+      provenance: {
+        contentHash: stringMatcher,
+        extractor: stringMatcher,
+        indexRunId: stringMatcher,
+      },
+      snippet: stringMatcher,
+      sourceType: expect.stringMatching(/^(code|doc)$/) as string,
+    });
   });
 
   it("returns context artifacts ahead of code when scores tie across repeated queries", async () => {

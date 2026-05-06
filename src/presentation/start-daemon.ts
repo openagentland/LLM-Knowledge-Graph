@@ -14,8 +14,14 @@ import type {
 } from "../application/dto/daemon.js";
 import type { LoggerPort } from "../application/ports/logger-port.js";
 import { composeDaemonHandler, composeMainLogger } from "../compose.js";
-import { FileDaemonRegistry } from "../infrastructure/daemon/file-daemon-registry.js";
+import {
+  DAEMON_LEASE_DURATION_MS,
+  FileDaemonRegistry,
+  isDaemonLeaseExpired,
+} from "../infrastructure/daemon/file-daemon-registry.js";
 import { ERROR_CODES, LkgError } from "../shared/errors/lkg-error.js";
+
+const DAEMON_HEARTBEAT_INTERVAL_MS = Math.floor(DAEMON_LEASE_DURATION_MS / 3);
 
 type DaemonWireResponse =
   | {
@@ -31,35 +37,59 @@ type DaemonWireResponse =
       ok: false;
     };
 
+type DaemonHeartbeatOptions = {
+  activeProjectIdentity?: string;
+  configFingerprint?: string;
+  daemonId?: string;
+  homeDir?: string;
+  logger: LoggerPort;
+  pid?: number;
+  socketPath: string;
+};
+
 export async function startDaemon(): Promise<void> {
   const socketPath = process.env.LKG_DAEMON_SOCKET_PATH?.trim();
   if (socketPath === undefined || socketPath.length === 0) {
     throw new Error("LKG_DAEMON_SOCKET_PATH is required for daemon mode.");
   }
 
+  const daemonId = process.env.LKG_DAEMON_ID?.trim();
+  if (daemonId === undefined || daemonId.length === 0) {
+    throw new Error("LKG_DAEMON_ID is required for daemon mode.");
+  }
+
   const cwd = process.cwd();
   const { config, logger } = composeMainLogger({ cwd });
-  const { handler, runtime } = composeDaemonHandler({ cwd, logger });
+  const { handler, indexStatePort, runtime, statusContext } =
+    composeDaemonHandler({ cwd, logger });
 
   await startDaemonServer({
     activeProjectIdentity: config.activeProjectIdentity,
+    daemonId,
     handler,
     homeDir: config.homeDir,
+    indexStatePort,
     logger,
     runtime,
     socketPath,
+    statusContext,
   });
 }
 
 export async function startDaemonServer(options: {
   activeProjectIdentity?: string;
+  daemonId?: string;
   handler: DaemonRequestHandler;
   homeDir?: string;
+  indexStatePort?: {
+    getStatus(identity: string, scope: string): Promise<unknown>;
+  };
   logger: LoggerPort;
   runtime?: DaemonRuntimePort;
   socketPath: string;
+  statusContext?: { activeProjectIdentity: string; indexScope: string };
 }): Promise<void> {
-  await mkdir(dirname(options.socketPath), { recursive: true });
+  await prepareSocketPathForBind(options);
 
   const server = createServer((socket) => {
     socket.setEncoding("utf8");
@@ -113,7 +143,28 @@ export async function startDaemonServer(options: {
     socketPath: options.socketPath,
   });
 
+  if (options.indexStatePort && options.statusContext) {
+    await options.indexStatePort.getStatus(
+      options.statusContext.activeProjectIdentity,
+      options.statusContext.indexScope,
+    );
+    options.logger.info("Daemon startup state recovery completed", {
+      event: "daemon.startup_recovery",
+    });
+  }
+
+  const heartbeat = createDaemonHeartbeat({
+    activeProjectIdentity: options.activeProjectIdentity,
+    daemonId: options.daemonId,
+    homeDir: options.homeDir,
+    logger: options.logger,
+    pid: process.pid,
+    socketPath: options.socketPath,
+  });
+  heartbeat.start();
+
   const shutdown = async (signal: string) => {
+    heartbeat.stop();
     options.logger.info("Shutting down LKG daemon", {
       event: "daemon.shutdown",
       signal,
@@ -176,8 +227,99 @@ async function handleLine(
   }
 }
 
+function createDaemonHeartbeat(options: DaemonHeartbeatOptions): {
+  start: () => void;
+  stop: () => void;
+} {
+  const activeProjectIdentity = options.activeProjectIdentity;
+  const daemonId = options.daemonId;
+  if (
+    options.homeDir === undefined ||
+    activeProjectIdentity === undefined ||
+    daemonId === undefined
+  ) {
+    return {
+      start: () => undefined,
+      stop: () => undefined,
+    };
+  }
+
+  const registry = new FileDaemonRegistry({ homeDir: options.homeDir });
+  let timer: NodeJS.Timeout | null = null;
+
+  const renew = async () => {
+    const renewed = await registry.renewLease(
+      activeProjectIdentity,
+      daemonId,
+      options.socketPath,
+      options.pid ?? process.pid,
+    );
+    if (!renewed) {
+      options.logger.warn("Lost LKG daemon registry ownership", {
+        activeProjectIdentity,
+        daemonId,
+        event: "daemon.lease_lost",
+      });
+      process.kill(process.pid, "SIGTERM");
+    }
+  };
+
+  return {
+    start: () => {
+      timer = setInterval(() => {
+        void renew();
+      }, DAEMON_HEARTBEAT_INTERVAL_MS);
+      timer.unref();
+    },
+    stop: () => {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+    },
+  };
+}
+
+async function prepareSocketPathForBind(options: {
+  activeProjectIdentity?: string;
+  daemonId?: string;
+  homeDir?: string;
+  socketPath: string;
+}): Promise<void> {
+  await mkdir(dirname(options.socketPath), { recursive: true });
+
+  if (
+    options.activeProjectIdentity === undefined ||
+    options.daemonId === undefined ||
+    options.homeDir === undefined
+  ) {
+    return;
+  }
+
+  const registry = new FileDaemonRegistry({ homeDir: options.homeDir });
+  const registration = await registry.read(options.activeProjectIdentity);
+  if (registration === null) {
+    return;
+  }
+
+  if (registration.daemonId === options.daemonId) {
+    await rm(options.socketPath, { force: true });
+    return;
+  }
+
+  if (isDaemonLeaseExpired(registration)) {
+    await rm(options.socketPath, { force: true });
+    return;
+  }
+
+  throw new Error(
+    `Another LKG daemon owns the socket for project ${options.activeProjectIdentity}.`,
+  );
+}
+
 function createRuntimeArtifactCleanup(options: {
   activeProjectIdentity?: string;
+  daemonId?: string;
   homeDir?: string;
   logger: LoggerPort;
   socketPath: string;
@@ -190,9 +332,19 @@ function createRuntimeArtifactCleanup(options: {
   return async () => {
     if (registry !== null && options.activeProjectIdentity !== undefined) {
       const registration = await registry.read(options.activeProjectIdentity);
-      if (registration?.socketPath === options.socketPath) {
-        await registry.delete(options.activeProjectIdentity);
+      const isOwner =
+        options.daemonId !== undefined &&
+        registration?.daemonId === options.daemonId;
+
+      if (isOwner) {
+        await registry.deleteIfOwned(
+          options.activeProjectIdentity,
+          options.daemonId!,
+        );
+        await rm(options.socketPath, { force: true });
       }
+
+      return;
     }
 
     await rm(options.socketPath, { force: true });

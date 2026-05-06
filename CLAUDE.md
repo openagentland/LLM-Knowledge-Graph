@@ -46,68 +46,102 @@ Prioritize correctness, clarity, and evidence over speed.
 - For validation work: add or verify failing invalid-input cases first.
 - For refactors: verify behavior remains unchanged.
 - For multi-step tasks: include a verification method for each step.
+- For implementation work, run five separate verification subagents, one for each command: `npm run lint:fix`, `npm run test:unit`, `npm run test:integration`, `npm run test:e2e`, and `npm run build`. Run build last because this repo uses its own plugin/MCP surfaces during development. Do not require the full verification set for docs-only, prompt-only, metadata-only, or configuration-only edits unless those edits affect runtime behavior. Report any skipped or failed gate explicitly.
 
-## LKG Operating Doctrine
+## Subagent Coordination
 
-Use this default workflow:
+The main agent owns planning, synthesis, implementation decisions, and final reporting. Use subagents only for bounded, independent work that preserves the main session's context.
 
-1. Check `lkg.status` first to evaluate health, freshness, and query readiness.
-2. Run `lkg.index` only when status shows reindexing is needed, readiness is missing, or the user explicitly asks for indexing.
-3. Use `lkg.search` for broad evidence retrieval when you are still locating relevant implementation or documentation.
-4. Use `lkg.symbols` for candidate discovery when symbol identity is ambiguous.
-5. Use `lkg.symbol` only after you know the target `path` and `symbol`, or after `lkg.symbols` narrows the candidates.
-6. Use `lkg.entrypoints` when the goal is to discover evidence-backed project starting surfaces.
-7. Use `lkg.flow` for bounded evidence-backed trace retrieval from or between anchors.
-8. Use `lkg.impact` for bounded blast-radius analysis from a target anchor.
-9. Use `lkg.slice` for a bounded evidence set around a criterion anchor.
-10. Read source files only after LKG retrieval narrows the scope.
-11. Keep responses evidence-first with explicit path, location, and provenance.
+- Delegate code exploration, large-output summarization, focused review, and independent verification commands to subagents when that reduces main-context noise.
+- Do not delegate open-ended ownership such as "find and fix the issue" unless the main agent has already narrowed the scope, success criteria, and allowed actions.
+- Prompt each subagent with the goal, relevant context, exact scope, whether code changes are allowed, and the expected report format.
+- Ask subagents for concise, evidence-backed findings: file paths, symbols, failing commands, risks, and actionable recommendations rather than full transcripts.
+- Treat subagent reports as evidence, not decisions. The main agent must synthesize results, verify important claims when needed, and decide the next step.
+- Run independent verification subagents in parallel when possible. Keep `npm run build` last because this repo uses its own plugin/MCP surfaces during development.
 
-### Practical tool order
+## Context Compaction Discipline
 
-- **Operational flow**: `lkg.status` -> `lkg.index` if needed -> `lkg.status` again if you need a post-index snapshot.
-- **Broad retrieval flow**: `lkg.status` if freshness matters -> `lkg.search` -> read narrowed files.
-- **Symbol flow**: `lkg.status` if readiness is uncertain -> `lkg.symbols` -> `lkg.symbol` -> read narrowed files.
-- **Entrypoint flow**: `lkg.status` if readiness is uncertain -> `lkg.entrypoints` -> read narrowed files when deeper verification is needed.
-- **Flow/impact flow**: `lkg.status` if freshness is uncertain -> `lkg.flow` or `lkg.impact` -> read narrowed files to verify high-value edges.
-- **Slice flow**: `lkg.status` if freshness is uncertain -> `lkg.slice` -> read narrowed files for execution context.
+- Use subagents to isolate large research, long logs, broad code exploration, and independent verification from the main conversation context.
+- Subagents should return concise summaries with only actionable findings, relevant file paths, symbols, failing commands, risks, and recommended next steps.
+- Do not paste raw logs, full transcripts, or large exploratory outputs into the main thread unless explicitly requested.
+- When context becomes long or after a large subagent or research phase, consider compacting before starting implementation or verification.
+- During compaction, preserve the current goal, accepted plan, constraints, files being edited, key decisions, subagent conclusions, open questions, and pending verification steps.
+- During compaction, drop exploratory chatter, repeated tool output, superseded hypotheses, raw logs, and details that are no longer actionable.
 
-## Current Skills
+## Dogfooding Discipline
 
-Current skills are thin orchestration wrappers over the implemented MCP tools. They must stay 1:1 with the runtime tool surface and must not add business logic, synthetic reasoning, or unsupported retrieval behavior.
+This repository should use LKG to develop LKG.
 
-- `lkg-status` -> `lkg.status`
-- `lkg-index` -> `lkg.index`
-- `lkg-search` -> `lkg.search`
-- `lkg-symbols` -> `lkg.symbols`
-- `lkg-symbol` -> `lkg.symbol`
-- `lkg-entrypoints` -> `lkg.entrypoints`
-- `lkg-flow` -> `lkg.flow`
-- `lkg-impact` -> `lkg.impact`
-- `lkg-slice` -> `lkg.slice`
+- For non-trivial code exploration, start with `lkg.status`, then use the narrowest applicable LKG retrieval tool before reading files.
+- If an LKG tool returns stale, missing, low-confidence, or confusing evidence, report that as product feedback instead of silently hiding it.
+- Fallback to grep/ripgrep only for exact strings, regex patterns, or when LKG is not ready.
+- When LKG results guide an implementation decision, cite the relevant evidence path/symbol in the response.
 
-Use a skill when the task is a direct single-tool action and the intended MCP operation is already clear.
+## Codebase Search
 
-## Current Agents
+This project is indexed with LLM Knowledge Graph (LKG). Use LKG's MCP tools to explore the codebase before reading files directly, unless you already know the exact file or string you need.
 
-Current agents are orchestration-only surfaces that coordinate the implemented MCP tools without adding product logic.
+### Current stable LKG tools
 
-- `LKG Manager` (`agents/manager.md`)
-  - Use for status-first lifecycle work.
-  - Handles readiness checks, conditional indexing, and post-index status verification.
-  - Scope is limited to `lkg.status` and `lkg.index`.
+The stable public tool surface is documented in `docs/developer-guide.md` and currently includes:
 
-- `LKG Explorer` (`agents/explorer.md`)
-  - Use for retrieval workflows.
-  - Handles evidence search, candidate-first symbol discovery/detail, entrypoint discovery, bounded flow tracing, bounded impact analysis, and bounded slicing.
-  - Scope is limited to `lkg.search`, `lkg.symbols`, `lkg.symbol`, `lkg.entrypoints`, `lkg.flow`, `lkg.impact`, `lkg.slice`, and optional freshness checks through `lkg.status`.
+- `lkg.status`: inspect index lifecycle state, watcher/runtime health, freshness, and recent errors.
+- `lkg.index`: start an index lifecycle run (`full`, `incremental`, or `rebuild`).
+- `lkg.search`: search indexed project knowledge and return ranked evidence with provenance.
+- `lkg.symbols`: list or search symbol candidates by path, kind, source type, or text query.
+- `lkg.symbol`: inspect one symbol candidate with provenance-rich evidence.
+- `lkg.entrypoints`: list evidence-backed entrypoint candidates.
+- `lkg.flow`: trace bounded flow segments from an anchor.
+- `lkg.impact`: analyze bounded impact from a target anchor.
+- `lkg.slice`: return a bounded evidence slice around a criterion anchor.
 
-Use an agent when the task needs multi-step orchestration across the current MCP tools. Use a skill when one exact tool action is enough.
+Do not refer to SocratiCode tool names such as `codebase_search`, `codebase_graph_query`, `codebase_graph_circular`, `codebase_graph_visualize`, `codebase_context`, or `codebase_context_search` unless those tools are actually implemented in this repository.
 
-## Boundary Rules
+### Workflow
 
-- `agents/` and `skills/` are orchestration surfaces, not business-logic layers.
-- Skills must remain thin 1:1 wrappers over implemented MCP tools.
-- Agents may coordinate current MCP tools, but must not invent product logic or bypass MCP contracts.
-- Do not implement indexing or retrieval logic in prompts.
-- If capability is missing, add it in code through architecture boundaries (`presentation -> application -> infrastructure`) before documenting it in prompts.
+1. **Start non-trivial explorations with `lkg.status`.**
+   Use `lkg.status` before broad code exploration, when search fails, when results look stale, or when you need to know whether indexing/watching is healthy.
+   - If the index is not ready or stale, use `lkg.index` with the smallest appropriate mode.
+   - While an index run is active, check `lkg.status` periodically instead of starting duplicate index runs.
+
+2. **Start most explorations with `lkg.search`.**
+   `lkg.search` is the default entry point for broad or uncertain questions because it returns ranked, provenance-backed evidence.
+   - Use broad conceptual queries for orientation: "index lifecycle", "daemon registry", "symbol extraction".
+   - Use precise queries for known concepts, types, functions, errors, or feature names.
+   - Prefer search results to decide which 1-3 files or symbols to inspect next.
+   - Use grep/ripgrep instead when you already know the exact string, identifier, or regex pattern.
+
+3. **Use symbol tools for candidate-first code understanding.**
+   Use `lkg.symbols` and `lkg.symbol` when the question is about definitions, symbol candidates, or symbol-level evidence.
+   - `lkg.symbols` helps list symbols in a file or search for symbols across the project.
+   - `lkg.symbol` gives detail for a specific symbol/path pair, including evidence and relationships where available.
+
+4. **Use graph-style reasoning tools for bounded questions.**
+   Use the higher-level reasoning tools when the question is about runtime behavior, entrypoints, or blast radius.
+   - `lkg.entrypoints` answers “where can execution or workflows start?”
+   - `lkg.flow` answers “what does this code path do?” from a bounded anchor.
+   - `lkg.impact` answers “what might be affected if this target changes?”
+   - `lkg.slice` gathers a bounded evidence neighborhood around a criterion.
+
+5. **Read files only after narrowing the target.**
+   Once LKG or grep clearly identifies relevant files, read only the needed sections. Do not open files speculatively just to determine whether they are relevant.
+
+### When to use each tool
+
+| Goal                                        | Tool              |
+| ------------------------------------------- | ----------------- |
+| Check whether the index/runtime is usable   | `lkg.status`      |
+| Start or refresh indexing                   | `lkg.index`       |
+| Understand where a feature/concept lives    | `lkg.search`      |
+| Find ranked evidence across code/docs/facts | `lkg.search`      |
+| Find exact strings or regex patterns        | grep / ripgrep    |
+| List/search symbols                         | `lkg.symbols`     |
+| Inspect one symbol candidate                | `lkg.symbol`      |
+| Discover entrypoints                        | `lkg.entrypoints` |
+| Trace behavior from an anchor               | `lkg.flow`        |
+| Estimate blast radius of a change           | `lkg.impact`      |
+| Collect a bounded evidence neighborhood     | `lkg.slice`       |
+
+> **Why LKG search first?** A single `lkg.search` call gives a compact, evidence-backed map of relevant code and documentation. After that, targeted reads are faster and more accurate than opening files speculatively.
+
+> **Keep the connection alive during indexing.** Indexing runs in the background. If an index run is active, call `lkg.status` periodically until it completes instead of starting another `lkg.index` run.

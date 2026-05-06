@@ -7,7 +7,7 @@ import type { IndexStatePort } from "../../application/ports/index-state-port.js
 import type { IngestionPipelinePort } from "../../application/ports/ingestion-pipeline-port.js";
 import type { LoggerPort } from "../../application/ports/logger-port.js";
 import { RunIndexUseCase } from "../../application/use-cases/run-index-use-case.js";
-import { ERROR_CODES } from "../../shared/errors/lkg-error.js";
+import { ERROR_CODES, LkgError } from "../../shared/errors/lkg-error.js";
 import {
   createIgnoreMatcher,
   shouldIgnorePath,
@@ -61,6 +61,7 @@ export class IncrementalWatcherRuntime {
       indexRunner: IndexRunner;
       indexStatePort: IndexStatePort;
       internalIgnores?: string[];
+      lkgignore?: string;
       logger: LoggerPort;
       statusContext: {
         activeProjectIdentity: string;
@@ -74,6 +75,7 @@ export class IncrementalWatcherRuntime {
         this.options.gitignore ??
         readFileSync(resolve(this.options.cwd, ".gitignore"), "utf8"),
       internalIgnores: this.options.internalIgnores,
+      lkgignore: this.options.lkgignore,
     });
     const watchFactory = this.options.watchFactory ?? defaultWatchFactory;
     this.unsubscribePromise = watchFactory(
@@ -162,12 +164,23 @@ export class IncrementalWatcherRuntime {
     try {
       await this.options.indexRunner.execute({ mode: "incremental" });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Unexpected watcher error.";
-      await this.markWatcherFailure(message);
-      this.options.logger.error("Watcher incremental index run failed", {
-        error: message,
-      });
+      if (
+        error instanceof LkgError &&
+        error.code === ERROR_CODES.ALREADY_RUNNING
+      ) {
+        this.followUpRequested = true;
+        this.options.logger.info("Watcher incremental index run deferred", {
+          error: error.message,
+          event: "watcher.index_deferred",
+        });
+      } else {
+        const message =
+          error instanceof Error ? error.message : "Unexpected watcher error.";
+        await this.markWatcherFailure(message);
+        this.options.logger.error("Watcher incremental index run failed", {
+          error: message,
+        });
+      }
     } finally {
       this.running = false;
     }

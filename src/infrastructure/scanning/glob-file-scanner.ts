@@ -47,9 +47,11 @@ const SCHEMA_FILE_NAMES = new Set(["tsconfig.json"]);
 export function createIgnoreMatcher(options: {
   gitignore: string;
   internalIgnores?: string[];
+  lkgignore?: string;
 }): Ignore {
   const matcher = ignore();
   matcher.add(options.gitignore);
+  matcher.add(options.lkgignore ?? "");
   matcher.add(options.internalIgnores ?? DEFAULT_INTERNAL_IGNORES);
   return matcher;
 }
@@ -64,6 +66,7 @@ export class GlobFileScanner implements FileScannerPort {
       cwd: string;
       gitignore: string;
       internalIgnores?: string[];
+      lkgignore?: string;
       maxFileSizeBytes: number;
       skipOversizedFiles?: boolean;
     },
@@ -73,6 +76,7 @@ export class GlobFileScanner implements FileScannerPort {
     const matcher = createIgnoreMatcher({
       gitignore: this.options.gitignore,
       internalIgnores: this.options.internalIgnores,
+      lkgignore: this.options.lkgignore,
     });
 
     const entries = await glob("**/*", {

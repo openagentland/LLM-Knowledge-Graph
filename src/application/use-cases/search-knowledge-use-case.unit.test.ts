@@ -244,19 +244,27 @@ describe("SearchKnowledgeUseCase", () => {
     } satisfies Partial<LkgError>);
   });
 
-  it("rejects doc evidence without doc location", async () => {
+  it("rejects code evidence with document location metadata", async () => {
     const retrieverPort: RetrieverPort = {
       retrieve: vi.fn().mockResolvedValue([
         {
-          artifactKind: "doc",
+          artifactKind: "code",
           chunkKey: "chunk-1",
-          content: "Architecture overview",
+          content: "export const a = 1;",
           contentHash: "hash-1",
           evidenceId: "evidence-1",
           extractor: "parser",
           indexRunId: "run-1",
-          path: "docs/a.md",
-          sourceType: "doc",
+          path: "src/a.ts",
+          sourceType: "code",
+          codeLocation: {
+            endLine: 1,
+            startLine: 1,
+          },
+          docLocation: {
+            offset: 0,
+            section: "Intro",
+          },
         },
       ]),
     };
@@ -284,5 +292,112 @@ describe("SearchKnowledgeUseCase", () => {
     await expect(useCase.execute({ query: "search" })).rejects.toMatchObject({
       code: ERROR_CODES.INTERNAL_ERROR,
     } satisfies Partial<LkgError>);
+  });
+
+  it("rejects doc evidence with code location metadata", async () => {
+    const retrieverPort: RetrieverPort = {
+      retrieve: vi.fn().mockResolvedValue([
+        {
+          artifactKind: "doc",
+          chunkKey: "chunk-1",
+          content: "Architecture overview",
+          contentHash: "hash-1",
+          evidenceId: "evidence-1",
+          extractor: "parser",
+          indexRunId: "run-1",
+          path: "docs/a.md",
+          sourceType: "doc",
+          codeLocation: {
+            endLine: 1,
+            startLine: 1,
+          },
+          docLocation: {
+            offset: 0,
+            section: "Architecture",
+          },
+        },
+      ]),
+    };
+    const useCase = new SearchKnowledgeUseCase(
+      createIndexStatePort({
+        activeProjectIdentity: "project-a",
+        counters: {
+          errors: 0,
+          filesIndexed: 1,
+          filesTotal: 1,
+        },
+        indexRunId: "run-1",
+        indexScope: "shared",
+        lastError: null,
+        lastIndexedAt: "2026-05-03T00:00:00.000Z",
+        needsReindex: false,
+        state: "idle",
+        watcherState: "enabled",
+      }),
+      createEmbeddingPort(),
+      retrieverPort,
+      context,
+    );
+
+    await expect(useCase.execute({ query: "search" })).rejects.toMatchObject({
+      code: ERROR_CODES.INTERNAL_ERROR,
+    } satisfies Partial<LkgError>);
+  });
+
+  it("preserves partition provenance in search evidence", async () => {
+    const retrieverPort: RetrieverPort = {
+      retrieve: vi.fn().mockResolvedValue([
+        {
+          artifactKind: "doc",
+          chunkKey: "chunk-1",
+          content: "Architecture overview",
+          contentHash: "hash-1",
+          evidenceId: "evidence-1",
+          extractor: "parser",
+          indexRunId: "run-1",
+          path: "docs/a.md",
+          sourceType: "doc",
+          docLocation: {
+            offset: 0,
+            section: "Architecture",
+          },
+          partitionId: "docs/a.md:0",
+          partitionIndex: 0,
+          partitionStatus: "partial",
+          partitionTotal: 2,
+        },
+      ]),
+    };
+    const useCase = new SearchKnowledgeUseCase(
+      createIndexStatePort({
+        activeProjectIdentity: "project-a",
+        counters: {
+          errors: 0,
+          filesIndexed: 1,
+          filesTotal: 1,
+        },
+        indexRunId: "run-1",
+        indexScope: "shared",
+        lastError: null,
+        lastIndexedAt: "2026-05-03T00:00:00.000Z",
+        needsReindex: false,
+        state: "idle",
+        watcherState: "enabled",
+      }),
+      createEmbeddingPort(),
+      retrieverPort,
+      context,
+    );
+
+    await expect(useCase.execute({ query: "search" })).resolves.toEqual({
+      results: [
+        expect.objectContaining({
+          partitionId: "docs/a.md:0",
+          partitionIndex: 0,
+          partitionStatus: "partial",
+          partitionTotal: 2,
+        }),
+      ],
+    });
   });
 });

@@ -126,6 +126,52 @@ describe("FallbackParser", () => {
     expect(document.structuralBlocks).toBeUndefined();
   });
 
+  it("preserves inferred metadata when degradation falls back to whole-document parsing", async () => {
+    const content = JSON.stringify(
+      {
+        name: "@openagentland/lkg",
+        scripts: {
+          lint: "eslint .",
+        },
+      },
+      null,
+      2,
+    );
+    const candidate = {
+      ...createCandidate(content),
+      artifactKind: "config" as const,
+      path: "package.json",
+      sourceType: "doc" as const,
+    };
+    const parser = new TestFallbackParser(
+      new Map([[`${candidate.path}:0`, "fail"]]),
+    );
+
+    const document = await parser.parse(candidate);
+
+    expect(document.language).toBe("json");
+    expect(document.packageName).toBe("@openagentland/lkg");
+    expect(document.packageScripts).toEqual([
+      {
+        command: "eslint .",
+        name: "lint",
+      },
+    ]);
+    expect(document.qualityGates).toEqual([
+      {
+        command: "eslint .",
+        scriptName: "lint",
+        tool: "package-script",
+      },
+    ]);
+    expect(document.partitions).toEqual([
+      expect.objectContaining({
+        partitionId: `${candidate.path}:0`,
+        status: "degraded",
+      }),
+    ]);
+  });
+
   it("throws when all lockfile partitions fail", async () => {
     const content = ["{", `  \"lock\": \"${"x".repeat(8_200)}\"`, "}"].join(
       "\n",

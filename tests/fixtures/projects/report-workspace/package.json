@@ -1,0 +1,8 @@
+{
+  "name": "report-workspace",
+  "private": true,
+  "scripts": {
+    "run-report": "node src/report.ts",
+    "test-report": "node src/report.ts --check"
+  }
+}

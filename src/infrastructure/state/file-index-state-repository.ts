@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 import type {
@@ -6,16 +6,112 @@ import type {
   WatcherState,
 } from "../../application/dto/index-lifecycle.js";
 import type {
+  AcquireRunLockInput,
   CompleteIndexRunInput,
   FailIndexRunInput,
+  IndexRunLock,
   IndexStatePort,
+  ReleaseRunLockInput,
+  RenewRunLockInput,
   RunIndexRecord,
+  SaveProgressInput,
   SaveStatusSnapshotInput,
   StartIndexRunInput,
 } from "../../application/ports/index-state-port.js";
 
+const INDEX_RUN_LOCK_LEASE_MS = 30 * 60 * 1000;
+
 export class FileIndexStateRepository implements IndexStatePort {
   constructor(private readonly options: { homeDir: string }) {}
+
+  async acquireRunLock(
+    input: AcquireRunLockInput,
+  ): Promise<IndexRunLock | null> {
+    const now = input.now ?? new Date();
+    const lockPath = this.resolveLockPath(
+      input.activeProjectIdentity,
+      input.indexScope,
+    );
+    await mkdir(dirname(lockPath), { recursive: true });
+
+    for (;;) {
+      try {
+        await mkdir(lockPath, { recursive: false });
+        const lock: IndexRunLock = {
+          acquiredAt: now.toISOString(),
+          indexRunId: input.indexRunId,
+          lastRenewedAt: now.toISOString(),
+          leaseExpiresAt: new Date(
+            now.getTime() + INDEX_RUN_LOCK_LEASE_MS,
+          ).toISOString(),
+          pid: process.pid,
+        };
+        await writeFile(
+          resolve(lockPath, "owner.json"),
+          `${JSON.stringify(lock, null, 2)}\n`,
+          "utf8",
+        );
+        return lock;
+      } catch (error) {
+        if (!isAlreadyExistsError(error)) {
+          throw error;
+        }
+
+        const existing = await this.readRunLock(
+          input.activeProjectIdentity,
+          input.indexScope,
+        );
+        if (existing !== null && !isRunLockExpired(existing, now)) {
+          return null;
+        }
+
+        await rm(lockPath, { force: true, recursive: true });
+      }
+    }
+  }
+
+  async releaseRunLock(input: ReleaseRunLockInput): Promise<void> {
+    const existing = await this.readRunLock(
+      input.activeProjectIdentity,
+      input.indexScope,
+    );
+    if (existing?.indexRunId !== input.indexRunId) {
+      return;
+    }
+
+    await rm(
+      this.resolveLockPath(input.activeProjectIdentity, input.indexScope),
+      { force: true, recursive: true },
+    );
+  }
+
+  async renewRunLock(input: RenewRunLockInput): Promise<IndexRunLock | null> {
+    const now = input.now ?? new Date();
+    const existing = await this.readRunLock(
+      input.activeProjectIdentity,
+      input.indexScope,
+    );
+    if (existing?.indexRunId !== input.indexRunId) {
+      return null;
+    }
+
+    const lock: IndexRunLock = {
+      ...existing,
+      lastRenewedAt: now.toISOString(),
+      leaseExpiresAt: new Date(
+        now.getTime() + INDEX_RUN_LOCK_LEASE_MS,
+      ).toISOString(),
+    };
+    await writeFile(
+      resolve(
+        this.resolveLockPath(input.activeProjectIdentity, input.indexScope),
+        "owner.json",
+      ),
+      `${JSON.stringify(lock, null, 2)}\n`,
+      "utf8",
+    );
+    return lock;
+  }
 
   async getRecord(
     activeProjectIdentity: string,
@@ -28,8 +124,56 @@ export class FileIndexStateRepository implements IndexStatePort {
     activeProjectIdentity: string,
     indexScope: StatusSnapshot["indexScope"],
   ): Promise<StatusSnapshot | null> {
-    const record = await this.readRecord(activeProjectIdentity, indexScope);
-    return record?.status ?? null;
+    const recovered = await this.recoverStaleRunState({
+      activeProjectIdentity,
+      indexScope,
+    });
+    return recovered;
+  }
+
+  async recoverStaleRunState(input: {
+    activeProjectIdentity: string;
+    indexScope: StatusSnapshot["indexScope"];
+    now?: Date;
+  }): Promise<StatusSnapshot | null> {
+    const record = await this.readRecord(
+      input.activeProjectIdentity,
+      input.indexScope,
+    );
+    if (record === null) {
+      return null;
+    }
+
+    if (record.status.state !== "running") {
+      return record.status;
+    }
+
+    const runLock = await this.readRunLock(
+      input.activeProjectIdentity,
+      input.indexScope,
+    );
+    const now = input.now ?? new Date();
+    if (runLock !== null && !isRunLockExpired(runLock, now)) {
+      return record.status;
+    }
+
+    const status: StatusSnapshot = {
+      ...record.status,
+      lastError: {
+        code: "INTERNAL_ERROR",
+        message: "The previous index run lost its coordination state.",
+        occurredAt: now.toISOString(),
+      },
+      needsReindex: true,
+      state: "error",
+    };
+
+    await this.writeRecord(input.activeProjectIdentity, input.indexScope, {
+      ...record,
+      status,
+    });
+
+    return status;
   }
 
   async markCompleted(input: CompleteIndexRunInput): Promise<StatusSnapshot> {
@@ -201,13 +345,7 @@ export class FileIndexStateRepository implements IndexStatePort {
     return record.status;
   }
 
-  async saveProgress(input: {
-    activeProjectIdentity: string;
-    configFingerprint?: string | null;
-    indexRunId: string;
-    indexScope: StatusSnapshot["indexScope"];
-    progress: NonNullable<StatusSnapshot["progress"]>;
-  }): Promise<StatusSnapshot> {
+  async saveProgress(input: SaveProgressInput): Promise<StatusSnapshot> {
     const existing = await this.readOrCreateDefault(
       input.activeProjectIdentity,
       input.indexScope,
@@ -218,6 +356,7 @@ export class FileIndexStateRepository implements IndexStatePort {
       configFingerprint: input.configFingerprint ?? existing.configFingerprint,
       status: {
         ...existing.status,
+        counters: input.counters ?? existing.status.counters,
         indexRunId: input.indexRunId,
         progress: input.progress,
       },
@@ -305,6 +444,36 @@ export class FileIndexStateRepository implements IndexStatePort {
     );
   }
 
+  private resolveLockPath(
+    activeProjectIdentity: string,
+    indexScope: StatusSnapshot["indexScope"],
+  ): string {
+    return resolve(
+      this.options.homeDir,
+      "state",
+      activeProjectIdentity,
+      `${indexScope}.run.lock`,
+    );
+  }
+
+  private async readRunLock(
+    activeProjectIdentity: string,
+    indexScope: StatusSnapshot["indexScope"],
+  ): Promise<IndexRunLock | null> {
+    try {
+      const content = await readFile(
+        resolve(
+          this.resolveLockPath(activeProjectIdentity, indexScope),
+          "owner.json",
+        ),
+        "utf8",
+      );
+      return JSON.parse(content) as IndexRunLock;
+    } catch {
+      return null;
+    }
+  }
+
   private async writeRecord(
     activeProjectIdentity: string,
     indexScope: StatusSnapshot["indexScope"],
@@ -314,4 +483,17 @@ export class FileIndexStateRepository implements IndexStatePort {
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
   }
+}
+
+function isAlreadyExistsError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "EEXIST"
+  );
+}
+
+function isRunLockExpired(lock: IndexRunLock, now: Date): boolean {
+  return Date.parse(lock.leaseExpiresAt) <= now.getTime();
 }

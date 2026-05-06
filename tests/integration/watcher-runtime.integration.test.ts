@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { StatusSnapshot } from "../../src/application/dto/index-lifecycle.js";
 import { IncrementalWatcherRuntime } from "../../src/infrastructure/watcher/incremental-watcher-runtime.js";
-import { ERROR_CODES } from "../../src/shared/errors/lkg-error.js";
+import { ERROR_CODES, LkgError } from "../../src/shared/errors/lkg-error.js";
 
 function createLogger() {
   const logger = {
@@ -159,7 +159,74 @@ describe("Watcher runtime integration", () => {
     }
   });
 
-  it("ignores watcher-only noise and does not schedule incremental work", async () => {
+  it("treats ALREADY_RUNNING as contention without persisting watcher failure", async () => {
+    let scheduledCallback: (() => void) | null = null;
+    const originalSetTimeout = global.setTimeout;
+    const originalClearTimeout = global.clearTimeout;
+    global.setTimeout = vi.fn(((callback: () => void) => {
+      scheduledCallback = callback;
+      return { token: "timeout" } as unknown as NodeJS.Timeout;
+    }) as typeof global.setTimeout);
+    global.clearTimeout = vi.fn();
+
+    try {
+      const markWatcherFailed = vi.fn().mockResolvedValue({});
+      const logger = createLogger();
+      const runtime = new IncrementalWatcherRuntime({
+        cwd: "/repo/project",
+        debounceMs: 25,
+        gitignore: "",
+        indexRunner: {
+          execute: vi
+            .fn()
+            .mockRejectedValue(
+              new LkgError(
+                ERROR_CODES.ALREADY_RUNNING,
+                "An index run is already active for this project scope.",
+              ),
+            ),
+        },
+        indexStatePort: {
+          getRecord: vi.fn(),
+          getStatus: vi.fn(),
+          markCompleted: vi.fn(),
+          markFailed: vi.fn(),
+          markRunning: vi.fn(),
+          markWatcherFailed,
+          markWatcherPending: vi.fn().mockResolvedValue({}),
+          saveProgress: vi.fn(),
+          saveStatusSnapshot: vi.fn(),
+        },
+        logger,
+        statusContext: {
+          activeProjectIdentity: "project-a",
+          indexScope: "shared",
+        },
+        watchFactory: () =>
+          Promise.resolve({
+            unsubscribe: vi.fn().mockResolvedValue(undefined),
+          }),
+      });
+
+      await runtime.notifyPathsChanged(["/repo/project/src/a.ts"]);
+      scheduledCallback?.();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(markWatcherFailed).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith(
+        "Watcher incremental index run deferred",
+        expect.objectContaining({ event: "watcher.index_deferred" }),
+      );
+
+      await runtime.close();
+    } finally {
+      global.setTimeout = originalSetTimeout;
+      global.clearTimeout = originalClearTimeout;
+    }
+  });
+
+  it("ignores git and plan-file noise", async () => {
     let scheduledCallback: (() => void) | null = null;
     const originalSetTimeout = global.setTimeout;
     const originalClearTimeout = global.clearTimeout;
@@ -289,6 +356,78 @@ describe("Watcher runtime integration", () => {
       expect(indexRunner.execute).toHaveBeenCalledTimes(1);
       expect(logger.info).toHaveBeenCalledWith("Watcher requested index run", {
         changedPaths: ["src/a.ts"],
+        event: "watcher.triggered",
+        pathCount: 1,
+      });
+
+      await runtime.close();
+    } finally {
+      global.setTimeout = originalSetTimeout;
+      global.clearTimeout = originalClearTimeout;
+    }
+  });
+
+  it("filters .lkgignore paths while still reacting to ignore-file changes", async () => {
+    let scheduledCallback: (() => void) | null = null;
+    const originalSetTimeout = global.setTimeout;
+    const originalClearTimeout = global.clearTimeout;
+    global.setTimeout = vi.fn(((callback: () => void) => {
+      scheduledCallback = callback;
+      return { token: "timeout" } as unknown as NodeJS.Timeout;
+    }) as typeof global.setTimeout);
+    global.clearTimeout = vi.fn();
+
+    try {
+      const markWatcherPending = vi.fn().mockResolvedValue({});
+      const logger = createLogger();
+      const indexRunner = {
+        execute: vi.fn().mockResolvedValue({
+          acceptedAt: "2026-05-04T00:00:00.000Z",
+          indexRunId: "run-lkgignore",
+          mode: "incremental",
+          state: "idle",
+        }),
+      };
+      const runtime = new IncrementalWatcherRuntime({
+        cwd: "/repo/project",
+        debounceMs: 25,
+        gitignore: "",
+        indexRunner,
+        indexStatePort: {
+          getRecord: vi.fn(),
+          getStatus: vi.fn(),
+          markCompleted: vi.fn(),
+          markFailed: vi.fn(),
+          markRunning: vi.fn(),
+          markWatcherFailed: vi.fn(),
+          markWatcherPending,
+          saveProgress: vi.fn(),
+          saveStatusSnapshot: vi.fn(),
+        },
+        lkgignore: "package-lock.json\n",
+        logger,
+        statusContext: {
+          activeProjectIdentity: "project-a",
+          indexScope: "shared",
+        },
+        watchFactory: () =>
+          Promise.resolve({
+            unsubscribe: vi.fn().mockResolvedValue(undefined),
+          }),
+      });
+
+      await runtime.notifyPathsChanged([
+        "/repo/project/package-lock.json",
+        "/repo/project/.lkgignore",
+      ]);
+      scheduledCallback?.();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(markWatcherPending).toHaveBeenCalledTimes(1);
+      expect(indexRunner.execute).toHaveBeenCalledTimes(1);
+      expect(logger.info).toHaveBeenCalledWith("Watcher requested index run", {
+        changedPaths: [".lkgignore"],
         event: "watcher.triggered",
         pathCount: 1,
       });

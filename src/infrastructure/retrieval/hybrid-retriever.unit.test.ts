@@ -287,6 +287,144 @@ describe("HybridRetriever", () => {
     ]);
   });
 
+  it("orders by score before context artifact priority", async () => {
+    const embedQuery = vi.fn();
+    const embeddingPort: EmbeddingPort = {
+      embedChunks: vi.fn(),
+      embedQuery,
+    };
+    const searchByEmbedding = vi.fn().mockResolvedValue([
+      createRetrievedChunk({
+        artifactKind: "doc",
+        chunkKey: "chunk-doc",
+        content: "lower scoring docs",
+        evidenceId: "e-doc",
+        extractor: "test",
+        indexRunId: "run1",
+        path: "README.md",
+        sourceType: "doc",
+        score: 0.7,
+      }),
+      createRetrievedChunk({
+        artifactKind: "code",
+        chunkKey: "chunk-code",
+        content: "higher scoring code",
+        evidenceId: "e-code",
+        extractor: "test",
+        indexRunId: "run1",
+        path: "src/main.ts",
+        sourceType: "code",
+        score: 0.9,
+      }),
+    ]);
+    const vectorStorePort: VectorStorePort = {
+      clear: vi.fn(),
+      deleteByPath: vi.fn(),
+      listRecords: vi.fn(),
+      searchByEmbedding,
+      upsert: vi.fn(),
+    };
+
+    const retriever = new HybridRetriever(embeddingPort, vectorStorePort);
+    const results = await retriever.retrieve({
+      query: "shared evidence",
+      queryEmbedding: [1, 0],
+      topK: 5,
+    });
+
+    expect(results.map((result) => result.chunkKey)).toEqual([
+      "chunk-code",
+      "chunk-doc",
+    ]);
+  });
+
+  it("preserves retrieval mapping metadata after deterministic reordering", async () => {
+    const embedQuery = vi.fn();
+    const embeddingPort: EmbeddingPort = {
+      embedChunks: vi.fn(),
+      embedQuery,
+    };
+    const searchByEmbedding = vi.fn().mockResolvedValue([
+      createRetrievedChunk({
+        artifactKind: "doc",
+        chunkKey: "chunk-b",
+        content: "beta",
+        docLocation: {
+          offset: 2,
+          section: "Beta",
+        },
+        evidenceId: "e-beta",
+        extractor: "test",
+        indexRunId: "run1",
+        partitionId: "docs/a.md:1",
+        partitionIndex: 1,
+        partitionStatus: "partial",
+        partitionTotal: 2,
+        path: "docs/a.md",
+        sourceType: "doc",
+        score: 0.8,
+      }),
+      createRetrievedChunk({
+        artifactKind: "doc",
+        chunkKey: "chunk-a",
+        content: "alpha",
+        docLocation: {
+          offset: 1,
+          section: "Alpha",
+        },
+        evidenceId: "e-alpha",
+        extractor: "test",
+        indexRunId: "run1",
+        partitionId: "docs/a.md:0",
+        partitionIndex: 0,
+        partitionStatus: "complete",
+        partitionTotal: 2,
+        path: "docs/a.md",
+        sourceType: "doc",
+        score: 0.8,
+      }),
+    ]);
+    const vectorStorePort: VectorStorePort = {
+      clear: vi.fn(),
+      deleteByPath: vi.fn(),
+      listRecords: vi.fn(),
+      searchByEmbedding,
+      upsert: vi.fn(),
+    };
+
+    const retriever = new HybridRetriever(embeddingPort, vectorStorePort);
+    const results = await retriever.retrieve({
+      query: "docs",
+      queryEmbedding: [1, 0],
+      topK: 5,
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        chunkKey: "chunk-a",
+        docLocation: {
+          offset: 1,
+          section: "Alpha",
+        },
+        partitionId: "docs/a.md:0",
+        partitionIndex: 0,
+        partitionStatus: "complete",
+        partitionTotal: 2,
+      }),
+      expect.objectContaining({
+        chunkKey: "chunk-b",
+        docLocation: {
+          offset: 2,
+          section: "Beta",
+        },
+        partitionId: "docs/a.md:1",
+        partitionIndex: 1,
+        partitionStatus: "partial",
+        partitionTotal: 2,
+      }),
+    ]);
+  });
+
   it("returns an empty result without querying storage when topK is non-positive", async () => {
     const embedQuery = vi.fn();
     const embeddingPort: EmbeddingPort = {

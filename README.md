@@ -39,7 +39,7 @@ LKG is **evidence-first** by design: results should be traceable to concrete pro
 
 ## Features
 
-- **MCP-first, capability-oriented tool surface** — The current stable public surface is `lkg.status`, `lkg.index`, `lkg.search`, `lkg.symbols`, and `lkg.symbol`, with future capability expansion guided by stable, capability-oriented contracts rather than backend-specific naming.
+- **MCP-first, capability-oriented tool surface** — The current stable public surface is `lkg.status`, `lkg.index`, `lkg.search`, `lkg.symbols`, `lkg.symbol`, `lkg.entrypoints`, `lkg.flow`, `lkg.impact`, and `lkg.slice`. Longer-term surfaces such as `lkg.graph`, `lkg.context`, `lkg.arch`, and `lkg.ask` remain part of the vision, not the current stable contract.
 - **Unified project knowledge ingestion** — Indexes code, docs, configs, schemas, and artifacts into one connected knowledge system.
 - **Structured facts and derived facts** — Builds machine-usable project facts (definitions, references, calls, imports, tests, config links) and higher-order derived relations that improve grounded retrieval and analysis.
 - **Graph-native understanding** — Connects symbols, files, modules, concepts, and decisions in an internal graph for traversal-based exploration and future capability growth.
@@ -117,9 +117,9 @@ Or as MCP only (without skills):
 claude mcp add lkg -- npx -y @openagentland/lkg
 ```
 
-**First time on a project** — ask your AI: **"Index this codebase"**. Indexing runs in the background; ask **"What is the codebase index status?"** to monitor progress. Depending on codebase size and whether you're using GPU-accelerated Ollama or cloud embeddings, first-time indexing can take anywhere from a few seconds to a few minutes (it takes under 10 minutes to first-index +3 million lines of code on a Macbook Pro M4). Once complete, you can use the current tool surface to search project knowledge and inspect symbol candidates and symbol details with provenance.
+**First time on a project** — ask your AI: **"Index this codebase"**. Indexing runs in the background; ask **"What is the codebase index status?"** to monitor progress. Depending on codebase size and whether you're using GPU-accelerated Ollama or cloud embeddings, first-time indexing can take anywhere from a few seconds to a few minutes (it takes under 10 minutes to first-index +3 million lines of code on a Macbook Pro M4). Once complete, you can use the current stable tool surface to search project knowledge, inspect symbol candidates and symbol details with provenance, and run bounded entrypoint, flow, impact, and slice analysis.
 
-**Every time after that** — just use the current tools (`lkg.search`, `lkg.symbols`, `lkg.symbol`, and status/index lifecycle tools as needed). On server startup LLM-Knowledge-Graph automatically detects previously indexed projects, restarts the file watcher, and runs an incremental update to catch any changes made while the server was down. If indexing was interrupted, it resumes automatically from the last checkpoint.
+**Every time after that** — use the current stable tools (`lkg.status`, `lkg.index`, `lkg.search`, `lkg.symbols`, `lkg.symbol`, `lkg.entrypoints`, `lkg.flow`, `lkg.impact`, and `lkg.slice`) as needed. On server startup LLM-Knowledge-Graph automatically detects previously indexed projects, restarts the file watcher, and runs an incremental update to catch any changes made while the server was down. If indexing was interrupted, it resumes automatically from the last checkpoint.
 
 > **Recommended**: For best results, add the [Agent Instructions](#agent-instructions) to your AI assistant's system prompt or project instructions file (`CLAUDE.md`, `AGENTS.md`, etc.). The key principle — **search before reading** — helps your AI use LLM-Knowledge-Graph's tools effectively and avoid unnecessary file reads.
 
@@ -131,14 +131,14 @@ claude mcp add lkg -- npx -y @openagentland/lkg
 
 LLM-Knowledge-Graph is available as a native plugin on multiple AI coding platforms. Plugins bundle the MCP server with workflow skills and agent instructions — one install gives you everything.
 
-| Platform        | Install method                                                                                                                                                                                                                       |
-| :-------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code     | `claude plugin marketplace add openagentland/llm-knowledge-graph && claude plugin install llm-knowledge-graph@llm-knowledge-graph` — [full instructions](docs/configuration.md#claude-code-plugin-recommended-for-claude-code-users) |
-| Cursor          | `/add-plugin https://github.com/openagentland/llm-knowledge-graph`                                                                                                                                                                   |
-| VS Code Copilot | Command Palette → `Chat: Install Plugin From Source` → `https://github.com/openagentland/llm-knowledge-graph`                                                                                                                        |
-| Zed             | Add as a custom MCP server in Zed settings — [config example](docs/configuration.md#zed)                                                                                                                                             |
-| Gemini CLI      | `gemini extensions install https://github.com/openagentland/llm-knowledge-graph`                                                                                                                                                     |
-| OpenAI Codex    | No public plugin directory yet — use the [MCP config](#quick-start) or see **Codex local install** below                                                                                                                             |
+| Platform        | Install method                                                                                                                                                                                                       |
+| :-------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code     | `claude plugin marketplace add openagentland/llm-knowledge-graph && claude plugin install llm-knowledge-graph@lkg` — [full instructions](docs/configuration.md#claude-code-plugin-recommended-for-claude-code-users) |
+| Cursor          | `/add-plugin https://github.com/openagentland/llm-knowledge-graph`                                                                                                                                                   |
+| VS Code Copilot | Command Palette → `Chat: Install Plugin From Source` → `https://github.com/openagentland/llm-knowledge-graph`                                                                                                        |
+| Zed             | Add as a custom MCP server in Zed settings — [config example](docs/configuration.md#zed)                                                                                                                             |
+| Gemini CLI      | `gemini extensions install https://github.com/openagentland/llm-knowledge-graph`                                                                                                                                     |
+| OpenAI Codex    | No public plugin directory yet — use the [MCP config](#quick-start) or see **Codex local install** below                                                                                                             |
 
 > **All other MCP hosts** (Claude Desktop, Windsurf, Cline, Roo Code, OpenCode): Use the [MCP config](#quick-start) — works with any host that supports the MCP protocol.
 

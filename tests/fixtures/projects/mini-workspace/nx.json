@@ -1,0 +1,7 @@
+{
+  "npmScope": "mini",
+  "workspaceLayout": {
+    "appsDir": "apps",
+    "libsDir": "libs"
+  }
+}

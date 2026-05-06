@@ -59,9 +59,9 @@ Every result must be traceable back to evidence (path, line, symbol, section, sc
 
 Tool names and response shapes should remain stable over time; capabilities can evolve incrementally behind them.
 
-### 3.7 Inspiration without dependency
+### 3.7 Stable-vs-vision contract discipline
 
-All inspirations are blueprints for mechanisms only; LKG must not be locked into the runtime, schema, or deployment model of any external system.
+Current stable MCP tools are documented in `docs/developer-guide.md`. This vision document may describe longer-term capability targets, but it must not be treated as proof that a tool is already implemented, stable, or release-ready.
 
 ## 4) Core knowledge pipeline
 
@@ -107,7 +107,9 @@ In short:
 - **Builder (`lkg.index`)**: builds facts/elements/graph/derived facts/summaries.
 - **Reasoning consumers**: agent runtimes or optional higher-level gateways can plan → retrieve → traverse → verify → synthesize on top of LKG's evidence-bearing knowledge surfaces.
 
-## 6) Long-term MCP tool surface
+### 6) Long-term MCP tool surface
+
+This section describes the long-term target surface. The current stable/implemented contract lives in `docs/developer-guide.md` and currently includes `lkg.status`, `lkg.index`, `lkg.search`, `lkg.symbols`, `lkg.symbol`, `lkg.entrypoints`, `lkg.flow`, `lkg.impact`, and `lkg.slice`.
 
 - **`lkg.status`**: reports system state (indexing, watcher, storage/provider health, latest errors, data freshness) so the agent knows how much it can trust the current knowledge.
 - **`lkg.index`**: triggers/controls the indexing lifecycle (full/incremental/rebuild) and synchronizes source code + docs + artifacts into the knowledge pipeline.

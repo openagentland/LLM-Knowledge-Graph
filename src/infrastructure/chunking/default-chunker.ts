@@ -10,7 +10,7 @@ import type {
 import type { ChunkerPort } from "../../application/ports/chunker-port.js";
 
 const DEFAULT_CONTEXT_WINDOW = 2048;
-const APPROX_CHARS_PER_TOKEN = 4;
+const APPROX_CHARS_PER_TOKEN = 2.5;
 
 export class DefaultChunker implements ChunkerPort {
   chunk(
@@ -325,7 +325,12 @@ function splitCodeByLineWindows(
       break;
     }
 
-    startIndex = computeOverlappedLineStart(lines, endIndex, overlapChars);
+    const nextStartIndex = computeOverlappedLineStart(
+      lines,
+      endIndex,
+      overlapChars,
+    );
+    startIndex = Math.max(startIndex + 1, nextStartIndex);
   }
 
   return segments;
@@ -342,9 +347,13 @@ function computeOverlappedLineStart(
 
   let overlap = 0;
   let start = endIndex;
-  while (start > 0 && overlap < overlapChars) {
+  while (start > 0) {
+    const previousLineLength = lines[start - 1]?.length ?? 0;
+    if (overlap > 0 && overlap + previousLineLength > overlapChars) {
+      break;
+    }
     start -= 1;
-    overlap += lines[start]?.length ?? 0;
+    overlap += previousLineLength;
   }
 
   return start;

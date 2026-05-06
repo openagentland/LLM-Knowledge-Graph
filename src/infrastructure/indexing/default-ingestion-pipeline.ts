@@ -68,6 +68,10 @@ export class DefaultIngestionPipeline implements IngestionPipelinePort {
   async run(context: {
     indexRunId: string;
     mode: "full" | "incremental" | "rebuild";
+    onProgress?: (
+      progress: IngestionSummary["progress"],
+      counters: IngestionSummary["counters"],
+    ) => Promise<void>;
   }): Promise<IngestionSummary> {
     if (context.mode === "rebuild") {
       await this.vectorStore.clear();
@@ -240,6 +244,16 @@ export class DefaultIngestionPipeline implements IngestionPipelinePort {
 
       if ((batchIndex + 1) % this.context.indexCheckpointEveryBatches === 0) {
         checkpointWrittenAt = new Date().toISOString();
+        await context.onProgress?.(
+          {
+            batchIndex: batchIndex + 1,
+            batchTotal: batches.length,
+            checkpointWrittenAt,
+            chunksWritten,
+            filesProcessed,
+          },
+          { ...counters },
+        );
       }
     }
 

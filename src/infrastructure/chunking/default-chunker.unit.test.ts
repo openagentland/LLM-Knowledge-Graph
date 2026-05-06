@@ -156,4 +156,71 @@ describe("DefaultChunker", () => {
       }),
     ]);
   });
+
+  it("omits partition provenance when a code chunk spans multiple partitions", async () => {
+    const document: ParsedDocument = {
+      artifactKind: "code",
+      content: ["const first = 1;", "const second = 2;"].join("\n"),
+      language: "ts",
+      partitions: [
+        {
+          content: "const first = 1;",
+          index: 0,
+          location: { endLine: 1, startLine: 1 },
+          partitionId: "main.ts:0",
+          status: "complete",
+          total: 2,
+        },
+        {
+          content: "const second = 2;",
+          index: 1,
+          location: { endLine: 2, startLine: 2 },
+          partitionId: "main.ts:1",
+          status: "complete",
+          total: 2,
+        },
+      ],
+      path: "main.ts",
+      sourceType: "code",
+    };
+
+    const chunks = await chunker.chunk(document, {
+      chunking: {
+        ...chunking,
+        maxChunkTokens: 64,
+      },
+      indexRunId: "run-1",
+    });
+
+    expect(chunks).toEqual([
+      expect.objectContaining({
+        codeLocation: { endLine: 2, startLine: 1 },
+        partitionId: undefined,
+        partitionIndex: undefined,
+        partitionStatus: undefined,
+        partitionTotal: undefined,
+      }),
+    ]);
+  });
+
+  it("skips oversized segments when callers disable degradation splitting", async () => {
+    const document: ParsedDocument = {
+      artifactKind: "doc",
+      content: `# Intro\n\n${"alpha ".repeat(80)}`,
+      language: null,
+      path: "README.md",
+      sourceType: "doc",
+    };
+
+    const chunks = await chunker.chunk(document, {
+      chunking: {
+        ...chunking,
+        maxChunkTokens: 8,
+        oversizedSegmentPolicy: "skip",
+      },
+      indexRunId: "run-1",
+    });
+
+    expect(chunks).toEqual([]);
+  });
 });

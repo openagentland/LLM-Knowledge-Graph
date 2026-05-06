@@ -194,6 +194,7 @@ Principles:
 
 - `server.json`: the standard MCP server descriptor (name, repository, packages, transport) used for distribution and tool integration.
 - `glama.json`: metadata schema for the Glama-compatible ecosystem/registry.
+- `.mcp.json`: host-facing local MCP wiring shared by plugin manifests.
 
 Principles:
 

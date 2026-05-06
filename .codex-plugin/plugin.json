@@ -1,7 +1,7 @@
 {
   "name": "llm-knowledge-graph",
   "version": "0.0.0",
-  "description": "Codebase intelligence — semantic search workflows, dependency graph analysis, and context artifact exploration for LLM-Knowledge-Graph",
+  "description": "Codebase intelligence — semantic search, symbol inspection, and bounded repository analysis for LLM-Knowledge-Graph",
   "author": {
     "name": "John Martin",
     "email": "john.itvn@gmail.com",
@@ -23,8 +23,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "LLM-Knowledge-Graph",
-    "shortDescription": "Codebase intelligence — semantic search, dependency graphs, and context artifacts",
-    "longDescription": "LLM-Knowledge-Graph provides codebase intelligence through semantic search workflows, dependency graph analysis, and context artifact exploration. Index your codebase, search with hybrid semantic + keyword search, visualize module dependencies, and manage context artifacts.",
+    "shortDescription": "Codebase intelligence — semantic search, symbol inspection, and bounded repository analysis",
+    "longDescription": "LLM-Knowledge-Graph provides codebase intelligence through semantic search, symbol inspection, and bounded repository analysis. Index your codebase, search with hybrid semantic + keyword search, inspect grounded symbol details, and run bounded entrypoint, flow, impact, and slice analysis.",
     "developerName": "John Martin",
     "category": "Development",
     "capabilities": ["Read"],
@@ -32,8 +32,8 @@
     "privacyPolicyURL": "https://github.com/openagentland/LLM-Knowledge-Graph/blob/main/SECURITY.md",
     "termsOfServiceURL": "https://github.com/openagentland/LLM-Knowledge-Graph/blob/main/LICENSE",
     "defaultPrompt": [
-      "Use LLM-Knowledge-Graph to search the codebase for authentication handling.",
-      "Use LLM-Knowledge-Graph to visualize the dependency graph of this project."
+      "Use LLM-Knowledge-Graph to inspect the symbol details for the authentication entrypoint.",
+      "Use LLM-Knowledge-Graph to trace the bounded flow from a request handler to its downstream calls."
     ]
   }
 }

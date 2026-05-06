@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
@@ -56,6 +56,10 @@ import {
   createWatcherIndexRunner,
 } from "./infrastructure/watcher/incremental-watcher-runtime.js";
 
+function readOptionalFile(path: string): string {
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
+
 export function createEmbeddingPort(options: {
   dimension: number | null;
   logger: LoggerPort;
@@ -94,7 +98,14 @@ export function composeDaemonHandler(options: {
   logger: LoggerPort;
 }): {
   handler: DaemonRequestHandler;
+  indexStatePort: FileIndexStateRepository;
   runtime: ReturnType<typeof createDaemonRuntime>;
+  statusContext: {
+    activeProjectIdentity: string;
+    configFingerprint: string;
+    indexScope: string;
+    watcherState: string;
+  };
 } {
   const { cwd, logger } = options;
   const { config } = composeMainLogger({ cwd });
@@ -169,7 +180,8 @@ export function composeDaemonHandler(options: {
   const ingestionPipeline: IngestionPipelinePort = new DefaultIngestionPipeline(
     new GlobFileScanner({
       cwd,
-      gitignore: readFileSync(resolve(cwd, ".gitignore"), "utf8"),
+      gitignore: readOptionalFile(resolve(cwd, ".gitignore")),
+      lkgignore: readOptionalFile(resolve(cwd, ".lkgignore")),
       maxFileSizeBytes: config.maxFileSizeBytes,
       skipOversizedFiles: config.oversizedSegmentPolicy === "skip",
     }),
@@ -219,6 +231,7 @@ export function composeDaemonHandler(options: {
     config.watcherState === "enabled"
       ? new IncrementalWatcherRuntime({
           cwd,
+          gitignore: readOptionalFile(resolve(cwd, ".gitignore")),
           indexRunner: createWatcherIndexRunner({
             indexStatePort: indexStateRepository,
             ingestionPipeline,
@@ -226,6 +239,7 @@ export function composeDaemonHandler(options: {
             statusContext,
           }),
           indexStatePort: indexStateRepository,
+          lkgignore: readOptionalFile(resolve(cwd, ".lkgignore")),
           logger,
           statusContext: {
             activeProjectIdentity: statusContext.activeProjectIdentity,
@@ -248,6 +262,8 @@ export function composeDaemonHandler(options: {
       statusContext,
       symbolCandidateStore,
     }),
+    indexStatePort: indexStateRepository,
     runtime: daemonRuntime,
+    statusContext,
   };
 }

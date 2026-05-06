@@ -1,4 +1,4 @@
-import type { StatusSnapshot } from "../dto/index-lifecycle.js";
+import type { IndexCounters, StatusSnapshot } from "../dto/index-lifecycle.js";
 import type { IndexStatePort } from "../ports/index-state-port.js";
 
 export class GetStatusUseCase {
@@ -37,15 +37,29 @@ export class GetStatusUseCase {
       };
     }
 
+    const configChanged =
+      stored.configFingerprint !== this.context.configFingerprint;
+
     return {
       ...stored.status,
+      counters: configChanged
+        ? clearStaleErrors(stored.status.counters)
+        : stored.status.counters,
+      lastError: configChanged ? null : stored.status.lastError,
       needsReindex:
         stored.status.needsReindex ||
         stored.status.pendingChanges ||
         stored.status.watcherState !== this.context.watcherState ||
-        stored.configFingerprint !== this.context.configFingerprint,
+        configChanged,
       pendingChanges: stored.status.pendingChanges,
       watcherState: this.context.watcherState,
     };
   }
+}
+
+function clearStaleErrors(counters: IndexCounters): IndexCounters {
+  return {
+    ...counters,
+    errors: 0,
+  };
 }

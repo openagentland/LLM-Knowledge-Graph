@@ -30,6 +30,15 @@ function createIndexStatePort(
   return {
     getRecord: vi.fn(),
     getStatus: vi.fn().mockResolvedValue(status),
+    recoverStaleRunState: vi.fn().mockResolvedValue(status),
+    acquireRunLock: vi.fn().mockResolvedValue({
+      acquiredAt: "2026-05-05T00:00:00.000Z",
+      indexRunId: "run-lock",
+      lastRenewedAt: "2026-05-05T00:00:00.000Z",
+      leaseExpiresAt: "2026-05-05T00:30:00.000Z",
+      pid: 123,
+    }),
+    releaseRunLock: vi.fn().mockResolvedValue(undefined),
     markCompleted: vi.fn(),
     markFailed: vi.fn(),
     markRunning: vi.fn(),
@@ -64,20 +73,25 @@ function createStatusSnapshot(
 
 describe("RunIndexUseCase", () => {
   it("rejects a concurrent run for the same project scope", async () => {
-    const indexStatePort = createIndexStatePort(
-      createStatusSnapshot({
-        counters: {
-          errors: 0,
-          filesIndexed: 1,
-          filesTotal: 1,
-        },
-        indexRunId: "run-1",
-        lastIndexedAt: "2026-05-03T00:00:00.000Z",
-        state: "running",
-      }),
-    );
+    const existingStatus = createStatusSnapshot({
+      counters: {
+        errors: 0,
+        filesIndexed: 1,
+        filesTotal: 1,
+      },
+      indexRunId: "run-1",
+      lastIndexedAt: "2026-05-03T00:00:00.000Z",
+      state: "running",
+    });
+    const recoverStaleRunState = vi.fn().mockResolvedValue(existingStatus);
+    const indexStatePort = {
+      ...createIndexStatePort(existingStatus),
+      acquireRunLock: vi.fn().mockResolvedValue(null),
+      recoverStaleRunState,
+    };
+    const run = vi.fn();
     const ingestionPipeline: IngestionPipelinePort = {
-      run: vi.fn(),
+      run,
     };
     const logger = createLogger();
 
@@ -96,9 +110,99 @@ describe("RunIndexUseCase", () => {
     await expect(useCase.execute({ mode: "full" })).rejects.toMatchObject({
       code: ERROR_CODES.ALREADY_RUNNING,
     } satisfies Partial<LkgError>);
+    expect(indexStatePort.acquireRunLock).toHaveBeenCalledTimes(2);
+    expect(recoverStaleRunState).toHaveBeenCalledWith({
+      activeProjectIdentity: "project-a",
+      indexScope: "shared",
+    });
+    expect(indexStatePort.acquireRunLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activeProjectIdentity: "project-a",
+        indexScope: "shared",
+      }),
+    );
+    expect(run).not.toHaveBeenCalled();
   });
 
-  it("passes mode to ingestion and marks a run completed after ingestion succeeds", async () => {
+  it("retries after stale-state recovery and starts the run", async () => {
+    const staleStatus = createStatusSnapshot({
+      indexRunId: "run-stale",
+      needsReindex: true,
+      pendingChanges: true,
+      state: "error",
+    });
+    const acquireRunLock = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        acquiredAt: "2026-05-05T00:00:00.000Z",
+        indexRunId: "run-lock",
+        lastRenewedAt: "2026-05-05T00:00:00.000Z",
+        leaseExpiresAt: "2026-05-05T00:30:00.000Z",
+        pid: 123,
+      });
+    const recoverStaleRunState = vi.fn().mockResolvedValue(staleStatus);
+    const indexStatePort: IndexStatePort = {
+      ...createIndexStatePort(staleStatus),
+      acquireRunLock,
+      recoverStaleRunState,
+      markCompleted: vi.fn().mockResolvedValue(createStatusSnapshot()),
+      markRunning: vi.fn().mockResolvedValue({
+        configFingerprint: "fingerprint-a",
+        status: createStatusSnapshot({
+          indexRunId: "run-recovered",
+          state: "running",
+        }),
+      }),
+    };
+    const ingestionPipeline: IngestionPipelinePort = {
+      run: vi.fn().mockResolvedValue({
+        chunks: [],
+        chunksEmbedded: 0,
+        chunksPurged: 0,
+        chunksWritten: 0,
+        counters: {
+          errors: 0,
+          filesIndexed: 0,
+          filesTotal: 0,
+        },
+        filesPurged: 0,
+        filesUnchanged: 0,
+        progress: {
+          batchIndex: 1,
+          batchTotal: 1,
+          checkpointWrittenAt: "2026-05-03T00:00:00.000Z",
+          chunksWritten: 0,
+          filesProcessed: 0,
+        },
+        skipped: [],
+      }),
+    };
+
+    const useCase = new RunIndexUseCase(
+      indexStatePort,
+      ingestionPipeline,
+      createLogger(),
+      {
+        activeProjectIdentity: "project-a",
+        configFingerprint: "fingerprint-a",
+        indexScope: "shared",
+        watcherState: "enabled",
+      },
+    );
+
+    await expect(useCase.execute({ mode: "full" })).resolves.toMatchObject({
+      mode: "full",
+      state: "idle",
+    });
+    expect(recoverStaleRunState).toHaveBeenCalledWith({
+      activeProjectIdentity: "project-a",
+      indexScope: "shared",
+    });
+    expect(acquireRunLock).toHaveBeenCalledTimes(2);
+  });
+
+  it("completes incremental runs and persists progress", async () => {
     const markCompleted = vi.fn().mockResolvedValue({
       activeProjectIdentity: "project-a",
       counters: {
@@ -116,8 +220,10 @@ describe("RunIndexUseCase", () => {
       watcherState: "enabled",
     });
     const saveProgress = vi.fn();
+    const releaseRunLock = vi.fn().mockResolvedValue(undefined);
     const indexStatePort: IndexStatePort = {
       ...createIndexStatePort(),
+      releaseRunLock,
       markCompleted,
       markRunning: vi.fn().mockResolvedValue({
         configFingerprint: "fingerprint-a",
@@ -201,6 +307,11 @@ describe("RunIndexUseCase", () => {
       expect.objectContaining({
         activeProjectIdentity: "project-a",
         configFingerprint: "fingerprint-a",
+        counters: {
+          errors: 0,
+          filesIndexed: 2,
+          filesTotal: 3,
+        },
         indexRunId: resultRecord.indexRunId,
         indexScope: "shared",
       }),
@@ -213,6 +324,13 @@ describe("RunIndexUseCase", () => {
           filesIndexed: 2,
           filesTotal: 3,
         },
+        indexScope: "shared",
+      }),
+    );
+    expect(releaseRunLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activeProjectIdentity: "project-a",
+        indexRunId: result.indexRunId,
         indexScope: "shared",
       }),
     );
@@ -306,6 +424,85 @@ describe("RunIndexUseCase", () => {
     );
   });
 
+  it("preserves the previous status snapshot before marking a run active", async () => {
+    const saveStatusSnapshot = vi.fn();
+    const previousStatus = createStatusSnapshot({
+      indexRunId: "run-previous",
+      lastIndexedAt: "2026-05-03T00:00:00.000Z",
+      needsReindex: true,
+      pendingChanges: true,
+      state: "idle",
+    });
+    const indexStatePort: IndexStatePort = {
+      ...createIndexStatePort(previousStatus),
+      markCompleted: vi.fn().mockResolvedValue(createStatusSnapshot()),
+      markRunning: vi.fn().mockResolvedValue({
+        configFingerprint: "fingerprint-a",
+        status: createStatusSnapshot({
+          indexRunId: "run-next",
+          state: "running",
+        }),
+      }),
+      saveStatusSnapshot,
+    };
+    const ingestionPipeline: IngestionPipelinePort = {
+      run: vi.fn().mockResolvedValue({
+        chunks: [],
+        chunksEmbedded: 0,
+        chunksPurged: 0,
+        chunksWritten: 0,
+        counters: {
+          errors: 0,
+          filesIndexed: 0,
+          filesTotal: 0,
+        },
+        filesPurged: 0,
+        filesUnchanged: 0,
+        progress: {
+          batchIndex: 1,
+          batchTotal: 1,
+          checkpointWrittenAt: "2026-05-03T00:00:00.000Z",
+          chunksWritten: 0,
+          filesProcessed: 0,
+        },
+        skipped: [],
+      }),
+    };
+    const logger = createLogger();
+    const useCase = new RunIndexUseCase(
+      indexStatePort,
+      ingestionPipeline,
+      logger,
+      {
+        activeProjectIdentity: "project-a",
+        configFingerprint: "fingerprint-a",
+        indexScope: "shared",
+        watcherState: "enabled",
+      },
+    );
+
+    await useCase.execute({ mode: "full" });
+
+    expect(saveStatusSnapshot).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        indexRunId: "run-previous",
+        lastIndexedAt: "2026-05-03T00:00:00.000Z",
+        needsReindex: true,
+        pendingChanges: true,
+        state: "idle",
+      }),
+    );
+    expect(saveStatusSnapshot).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        needsReindex: false,
+        pendingChanges: false,
+        state: "running",
+      }),
+    );
+  });
+
   it("marks a run failed when ingestion throws", async () => {
     const markFailed = vi.fn().mockResolvedValue({
       activeProjectIdentity: "project-a",
@@ -327,8 +524,10 @@ describe("RunIndexUseCase", () => {
       state: "error",
       watcherState: "enabled",
     });
+    const releaseRunLock = vi.fn().mockResolvedValue(undefined);
     const indexStatePort: IndexStatePort = {
       ...createIndexStatePort(),
+      releaseRunLock,
       markFailed,
       markRunning: vi.fn().mockResolvedValue({
         configFingerprint: "fingerprint-a",
@@ -391,5 +590,176 @@ describe("RunIndexUseCase", () => {
         watcherState: "enabled",
       }),
     );
+  });
+
+  it("renews the run lock while ingestion is active", async () => {
+    vi.useFakeTimers();
+    const markCompleted = vi.fn().mockResolvedValue(createStatusSnapshot());
+    const releaseRunLock = vi.fn().mockResolvedValue(undefined);
+    const renewRunLock = vi.fn().mockResolvedValue({
+      acquiredAt: "2026-05-05T00:00:00.000Z",
+      indexRunId: "run-lock",
+      lastRenewedAt: "2026-05-05T00:10:00.000Z",
+      leaseExpiresAt: "2026-05-05T00:40:00.000Z",
+      pid: 123,
+    });
+    const indexStatePort: IndexStatePort = {
+      ...createIndexStatePort(),
+      markCompleted,
+      markRunning: vi.fn().mockResolvedValue({
+        configFingerprint: "fingerprint-a",
+        status: createStatusSnapshot({
+          indexRunId: "run-renewed",
+          state: "running",
+        }),
+      }),
+      releaseRunLock,
+      renewRunLock,
+    };
+    let resolveRun:
+      | ((value: Awaited<ReturnType<IngestionPipelinePort["run"]>>) => void)
+      | undefined;
+    const run = vi.fn(
+      () =>
+        new Promise<Awaited<ReturnType<IngestionPipelinePort["run"]>>>(
+          (resolve) => {
+            resolveRun = resolve;
+          },
+        ),
+    );
+    const ingestionPipeline: IngestionPipelinePort = { run };
+    const logger = createLogger();
+    const useCase = new RunIndexUseCase(
+      indexStatePort,
+      ingestionPipeline,
+      logger,
+      {
+        activeProjectIdentity: "project-a",
+        configFingerprint: "fingerprint-a",
+        indexScope: "shared",
+        watcherState: "enabled",
+      },
+    );
+
+    const execution = useCase.execute({ mode: "full" });
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    resolveRun?.({
+      chunks: [],
+      chunksEmbedded: 0,
+      chunksPurged: 0,
+      chunksWritten: 0,
+      counters: {
+        errors: 0,
+        filesIndexed: 0,
+        filesTotal: 0,
+      },
+      filesPurged: 0,
+      filesUnchanged: 0,
+      progress: {
+        batchIndex: 1,
+        batchTotal: 1,
+        checkpointWrittenAt: "2026-05-03T00:00:00.000Z",
+        chunksWritten: 0,
+        filesProcessed: 0,
+      },
+      skipped: [],
+    });
+    await execution;
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+
+    expect(renewRunLock).toHaveBeenCalledTimes(1);
+    expect(releaseRunLock).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("fails deterministically when lock renewal loses ownership", async () => {
+    vi.useFakeTimers();
+    const markFailed = vi.fn().mockResolvedValue(
+      createStatusSnapshot({
+        state: "error",
+      }),
+    );
+    const releaseRunLock = vi.fn().mockResolvedValue(undefined);
+    const renewRunLock = vi.fn().mockResolvedValue(null);
+    const indexStatePort: IndexStatePort = {
+      ...createIndexStatePort(),
+      markFailed,
+      markRunning: vi.fn().mockResolvedValue({
+        configFingerprint: "fingerprint-a",
+        status: createStatusSnapshot({
+          indexRunId: "run-lost",
+          state: "running",
+        }),
+      }),
+      releaseRunLock,
+      renewRunLock,
+    };
+    let resolveRun:
+      | ((value: Awaited<ReturnType<IngestionPipelinePort["run"]>>) => void)
+      | undefined;
+    const run = vi.fn(
+      () =>
+        new Promise<Awaited<ReturnType<IngestionPipelinePort["run"]>>>(
+          (resolve) => {
+            resolveRun = resolve;
+          },
+        ),
+    );
+    const ingestionPipeline: IngestionPipelinePort = { run };
+    const logger = createLogger();
+    const useCase = new RunIndexUseCase(
+      indexStatePort,
+      ingestionPipeline,
+      logger,
+      {
+        activeProjectIdentity: "project-a",
+        configFingerprint: "fingerprint-a",
+        indexScope: "shared",
+        watcherState: "enabled",
+      },
+    );
+
+    const execution = useCase.execute({ mode: "full" });
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    resolveRun?.({
+      chunks: [],
+      chunksEmbedded: 0,
+      chunksPurged: 0,
+      chunksWritten: 0,
+      counters: {
+        errors: 0,
+        filesIndexed: 0,
+        filesTotal: 0,
+      },
+      filesPurged: 0,
+      filesUnchanged: 0,
+      progress: {
+        batchIndex: 1,
+        batchTotal: 1,
+        checkpointWrittenAt: "2026-05-03T00:00:00.000Z",
+        chunksWritten: 0,
+        filesProcessed: 0,
+      },
+      skipped: [],
+    });
+
+    await expect(execution).rejects.toMatchObject({
+      code: ERROR_CODES.INTERNAL_ERROR,
+    } satisfies Partial<LkgError>);
+    expect(markFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: {
+          code: ERROR_CODES.INTERNAL_ERROR,
+          message: "Index run lost its coordination lock.",
+          occurredAt: expect.any(String) as string,
+        },
+      }),
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      "Lost index run lock",
+      expect.objectContaining({ event: "index.lock_lost" }),
+    );
+    expect(releaseRunLock).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 });

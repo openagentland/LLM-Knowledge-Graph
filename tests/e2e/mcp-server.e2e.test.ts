@@ -15,9 +15,9 @@ describe("MCP server e2e", () => {
 
   async function startInitializedClient(
     envOverrides: NodeJS.ProcessEnv = {},
-    options: { homeDir?: string } = {},
+    options: { fixtureName?: string; homeDir?: string } = {},
   ): Promise<McpStdioClient> {
-    cwd = await materializeFixtureProject("mcp-basic");
+    cwd = await materializeFixtureProject(options.fixtureName ?? "mcp-basic");
     client = startMcpServer(envOverrides, { cwd, homeDir: options.homeDir });
     await client.initialize();
     return client;
@@ -28,7 +28,7 @@ describe("MCP server e2e", () => {
     client = undefined;
   });
 
-  describe("initialize and tool discovery", () => {
+  describe("tool discovery and pre-index contracts", () => {
     it("completes initialize handshake over stdio", async () => {
       cwd = await materializeFixtureProject("mcp-basic");
       client = startMcpServer({}, { cwd });
@@ -49,19 +49,24 @@ describe("MCP server e2e", () => {
         return record.name;
       });
 
-      expect(toolNames).toContain("lkg.status");
-      expect(toolNames).toContain("lkg.index");
-      expect(toolNames).toContain("lkg.search");
-      expect(toolNames).toContain("lkg.symbols");
-      expect(toolNames).toContain("lkg.symbol");
-      expect(toolNames).toContain("lkg.entrypoints");
-      expect(toolNames).toContain("lkg.flow");
-      expect(toolNames).toContain("lkg.impact");
-      expect(toolNames).toContain("lkg.slice");
+      expect(toolNames).toEqual(
+        expect.arrayContaining([
+          "lkg.status",
+          "lkg.index",
+          "lkg.search",
+          "lkg.symbols",
+          "lkg.symbol",
+          "lkg.entrypoints",
+          "lkg.flow",
+          "lkg.impact",
+          "lkg.slice",
+        ]),
+      );
+      expect(new Set(toolNames).size).toBe(toolNames.length);
     });
   });
 
-  describe("status and search contracts", () => {
+  describe("runtime recovery and post-index MCP payloads", () => {
     it("recovers from a stale daemon registry entry during startup", async () => {
       const homeDir = mkdtempSync(join(tmpdir(), "lkg-e2e-stale-daemon-"));
       const initializedClient = await startInitializedClient({}, { homeDir });
@@ -149,7 +154,7 @@ describe("MCP server e2e", () => {
       expect(payload.code).toBe("INDEX_NOT_READY");
     });
 
-    it("returns enriched search evidence after indexing", async () => {
+    it("returns post-index search payloads with provenance and partition metadata", async () => {
       const initializedClient = await startInitializedClient();
 
       await initializedClient.callTool("lkg.index", { mode: "full" });
@@ -198,7 +203,165 @@ describe("MCP server e2e", () => {
       }
     });
 
-    it("returns analysis tool payloads after indexing", async () => {
+    it("returns deterministic fixture-backed search, symbol, and entrypoint evidence", async () => {
+      const initializedClient = await startInitializedClient(
+        {},
+        { fixtureName: "report-workspace" },
+      );
+
+      await initializedClient.callTool("lkg.index", { mode: "full" });
+
+      const searchPayload = parseToolTextPayload<{
+        results: Array<{
+          path: string;
+          snippet: string;
+          source_type: string;
+        }>;
+      }>(
+        await initializedClient.callTool("lkg.search", {
+          query: "report pipeline",
+          topK: 5,
+        }),
+      );
+      const symbolsPayload = parseToolTextPayload<{
+        results: Array<{
+          evidence: { path: string };
+          kind: string;
+          name: string;
+          source_type: string;
+        }>;
+      }>(
+        await initializedClient.callTool("lkg.symbols", {
+          query: "reportPipeline",
+          source_type: "code",
+        }),
+      );
+      const entrypointsPayload = parseToolTextPayload<{
+        results: Array<{
+          kind: string;
+          name: string;
+          path: string;
+        }>;
+      }>(
+        await initializedClient.callTool("lkg.entrypoints", {
+          query: "run-report",
+          kind: "script",
+        }),
+      );
+
+      expect(
+        searchPayload.results.slice(0, 2).map((result) => result.path),
+      ).toEqual(expect.arrayContaining(["README.md", "src/report.ts"]));
+      expect(
+        searchPayload.results.some(
+          (result) =>
+            result.path === "README.md" &&
+            result.source_type === "doc" &&
+            result.snippet.includes("report pipeline"),
+        ),
+      ).toBe(true);
+      expect(
+        searchPayload.results.some(
+          (result) =>
+            result.path === "src/report.ts" &&
+            result.source_type === "code" &&
+            result.snippet.includes("report pipeline"),
+        ),
+      ).toBe(true);
+
+      expect(symbolsPayload.results[0]).toMatchObject({
+        evidence: { path: "src/report.ts" },
+        kind: "function",
+        name: "reportPipeline",
+        source_type: "code",
+      });
+
+      expect(entrypointsPayload.results).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "script",
+            name: "run-report",
+            path: "package.json",
+          }),
+        ]),
+      );
+    });
+
+    it("returns deterministic workspace structure evidence from docs, config, and code", async () => {
+      const initializedClient = await startInitializedClient(
+        {},
+        { fixtureName: "mini-workspace" },
+      );
+
+      await initializedClient.callTool("lkg.index", { mode: "full" });
+
+      const searchPayload = parseToolTextPayload<{
+        results: Array<{
+          path: string;
+          snippet: string;
+          source_type: string;
+        }>;
+      }>(
+        await initializedClient.callTool("lkg.search", {
+          query: "workspaceLayout appsDir bootstrapApi",
+          topK: 5,
+        }),
+      );
+      const symbolsPayload = parseToolTextPayload<{
+        results: Array<{
+          evidence: { path: string };
+          kind: string;
+          name: string;
+        }>;
+      }>(
+        await initializedClient.callTool("lkg.symbols", {
+          query: "bootstrapApi",
+          source_type: "code",
+        }),
+      );
+      const entrypointsPayload = parseToolTextPayload<{
+        results: Array<{
+          evidence: Array<{ path: string; source_type: string }>;
+          kind: string;
+          name: string;
+          path: string;
+        }>;
+      }>(
+        await initializedClient.callTool("lkg.entrypoints", {
+          query: "nx",
+          kind: "entrypoint",
+        }),
+      );
+
+      expect(
+        searchPayload.results.slice(0, 3).map((result) => result.path),
+      ).toEqual(expect.arrayContaining(["README.md", "apps/api/main.ts"]));
+      expect(
+        searchPayload.results.some(
+          (result) =>
+            result.path === "README.md" &&
+            result.source_type === "doc" &&
+            result.snippet.includes("bootstrapApi"),
+        ),
+      ).toBe(true);
+      expect(symbolsPayload.results[0]).toMatchObject({
+        evidence: { path: "apps/api/main.ts" },
+        kind: "function",
+        name: "bootstrapApi",
+      });
+
+      expect(
+        entrypointsPayload.results.some(
+          (result) =>
+            result.kind === "entrypoint" &&
+            result.name === "nx" &&
+            result.path === "nx.json" &&
+            result.evidence.some((evidence) => evidence.path === "nx.json"),
+        ),
+      ).toBe(true);
+    });
+
+    it("returns post-index analysis tool payloads", async () => {
       const initializedClient = await startInitializedClient();
 
       await initializedClient.callTool("lkg.index", { mode: "full" });
@@ -372,7 +535,7 @@ describe("MCP server e2e", () => {
       );
     });
 
-    it("returns candidate-first symbol evidence after indexing", async () => {
+    it("returns post-index candidate-first symbol payloads", async () => {
       const initializedClient = await startInitializedClient();
 
       await initializedClient.callTool("lkg.index", { mode: "full" });
@@ -463,7 +626,7 @@ describe("MCP server e2e", () => {
     });
   });
 
-  describe("index lifecycle and validation", () => {
+  describe("input validation and index lifecycle", () => {
     it("runs lkg.index twice without regressing lifecycle state", async () => {
       const initializedClient = await startInitializedClient();
 

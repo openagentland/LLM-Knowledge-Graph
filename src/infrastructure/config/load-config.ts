@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
@@ -64,7 +64,7 @@ const DEFAULT_INFERENCE_THREADS = 1;
 const DEFAULT_VECTOR_UPSERT_BATCH_SIZE = 100;
 const DEFAULT_INDEX_CHECKPOINT_EVERY_BATCHES = 1;
 const DEFAULT_DAEMON_STARTUP_TIMEOUT_MS = 20_000;
-const DEFAULT_EMBEDDING_TOKEN_MARGIN = 256;
+const DEFAULT_EMBEDDING_TOKEN_MARGIN = 400;
 const DEFAULT_CHUNK_TOKEN_OVERLAP = 64;
 const DEFAULT_MAX_SPLIT_DEPTH = 4;
 const LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);
@@ -145,6 +145,7 @@ export function loadConfig(
     env.LKG_EMBEDDING_DIM,
     "LKG_EMBEDDING_DIM",
   );
+  const lkgignore = readOptionalConfigFile(resolve(cwd, ".lkgignore"));
   const fileScanBatchSize = resolvePositiveInteger(
     env.LKG_FILE_SCAN_BATCH_SIZE,
     "LKG_FILE_SCAN_BATCH_SIZE",
@@ -231,6 +232,7 @@ export function loadConfig(
         indexScope,
         inferenceThreads,
         chunkTokenOverlap,
+        lkgignore,
         llamaCppModelDir,
         llamaCppUri,
         logLevel,
@@ -290,6 +292,10 @@ export function loadConfig(
 
 function ensureWritableDirectory(path: string): void {
   mkdirSync(path, { recursive: true });
+}
+
+function readOptionalConfigFile(path: string): string {
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
 
 function normalizePath(path: string): string {

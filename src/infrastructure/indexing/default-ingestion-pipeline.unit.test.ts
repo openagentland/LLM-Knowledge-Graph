@@ -358,6 +358,81 @@ function getMock<T extends (...args: never[]) => unknown>(
 }
 
 describe("DefaultIngestionPipeline", () => {
+  it("reports checkpoint progress with realtime counters", async () => {
+    const candidates = [
+      createCandidate("src/first.ts"),
+      createCandidate("src/second.ts"),
+    ];
+    const documents = candidates.map((candidate, index) =>
+      createDocument(
+        candidate,
+        `export const value${index + 1} = ${index + 1};\n`,
+      ),
+    );
+    const chunks = documents.map((document, index) =>
+      createChunk({
+        content: document.content,
+        evidenceId: `evidence-${index + 1}`,
+        path: document.path,
+      }),
+    );
+    const onProgress = vi.fn().mockResolvedValue(undefined);
+
+    const { pipeline } = createPipeline({
+      scanner: {
+        scan: vi.fn().mockResolvedValue({ candidates, skipped: [] }),
+      },
+      parser: {
+        parse: vi
+          .fn()
+          .mockResolvedValueOnce(documents[0])
+          .mockResolvedValueOnce(documents[1]),
+      },
+      chunker: {
+        chunk: vi
+          .fn()
+          .mockResolvedValueOnce([chunks[0]])
+          .mockResolvedValueOnce([chunks[1]]),
+      },
+      embedding: {
+        embedChunks: vi
+          .fn()
+          .mockResolvedValueOnce([{ evidenceId: "evidence-1", vector: [1] }])
+          .mockResolvedValueOnce([{ evidenceId: "evidence-2", vector: [2] }]),
+      },
+      graphProjector: {
+        project: vi.fn().mockReturnValue({ edges: [], nodes: [] }),
+      },
+    });
+
+    const summary = await pipeline.run({
+      indexRunId: "run-progress",
+      mode: "full",
+      onProgress,
+    });
+
+    expect(onProgress).toHaveBeenCalledTimes(1);
+    expect(onProgress).toHaveBeenCalledWith(
+      {
+        batchIndex: 1,
+        batchTotal: 1,
+        checkpointWrittenAt: expect.any(String) as string,
+        chunksWritten: 2,
+        filesProcessed: 2,
+      },
+      {
+        errors: 0,
+        filesIndexed: 2,
+        filesTotal: 2,
+      },
+    );
+    expect(summary.counters).toEqual({
+      errors: 0,
+      filesIndexed: 2,
+      filesTotal: 2,
+    });
+  });
+
   it("clears vector store and manifest before a rebuild run", async () => {
     const candidate = createCandidate("src/rebuild.ts");
     const document = createDocument(

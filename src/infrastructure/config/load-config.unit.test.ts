@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -28,7 +28,7 @@ describe("loadConfig", () => {
     expect(config.embeddingBatchSize).toBe(16);
     expect(config.embeddingThreads).toBe(1);
     expect(config.inferenceThreads).toBe(1);
-    expect(config.embeddingTokenMargin).toBe(256);
+    expect(config.embeddingTokenMargin).toBe(400);
     expect(config.fileScanBatchSize).toBe(50);
     expect(config.indexCheckpointEveryBatches).toBe(1);
     expect(config.maxChunkTokens).toBeNull();
@@ -243,6 +243,35 @@ describe("loadConfig", () => {
     expect(inferenceUpdatedConfig.configFingerprint).not.toBe(
       baseConfig.configFingerprint,
     );
+  });
+
+  it("changes config fingerprint when .lkgignore changes", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lkg-config-ignore-"));
+    writeFileSync(join(cwd, ".lkgignore"), "package-lock.json\n", "utf8");
+
+    const initial = loadConfig({
+      cwd,
+      env: {
+        LKG_HOME: "/tmp/lkg-home",
+      },
+      gitBranch: null,
+    });
+
+    writeFileSync(
+      join(cwd, ".lkgignore"),
+      "package-lock.json\n*.log\n",
+      "utf8",
+    );
+
+    const updated = loadConfig({
+      cwd,
+      env: {
+        LKG_HOME: "/tmp/lkg-home",
+      },
+      gitBranch: null,
+    });
+
+    expect(updated.configFingerprint).not.toBe(initial.configFingerprint);
   });
 
   it("accepts an explicit max file size", () => {

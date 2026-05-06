@@ -248,6 +248,123 @@ describe("start-daemon", () => {
     );
   });
 
+  it("does not remove an existing socket without registry ownership context", async () => {
+    const server = createServer();
+    server.listen = vi.fn((_socketPath: string, _callback: () => void) => {
+      server.emit("error", new Error("EADDRINUSE"));
+      return server;
+    });
+    createServerMock.mockImplementation((handler: MockSocketHandler) => {
+      server.socketHandler = handler;
+      return server;
+    });
+    mkdirMock.mockResolvedValue(undefined);
+    rmMock.mockResolvedValue(undefined);
+
+    await expect(
+      startDaemonServer({
+        handler: createHandler(),
+        logger: createLogger(),
+        socketPath: "/tmp/lkg.sock",
+      }),
+    ).rejects.toThrow("EADDRINUSE");
+
+    expect(mkdirMock).toHaveBeenCalledWith("/tmp", { recursive: true });
+    expect(rmMock).not.toHaveBeenCalled();
+  });
+
+  it("does not remove a socket owned by another unexpired daemon", async () => {
+    const logger = createLogger();
+    const readSpy = vi
+      .spyOn(FileDaemonRegistry.prototype, "read")
+      .mockResolvedValue({
+        configFingerprint: "fingerprint-a",
+        daemonId: "daemon-b",
+        lastHeartbeatAt: new Date().toISOString(),
+        leaseExpiresAt: new Date(Date.now() + 30_000).toISOString(),
+        pid: 123,
+        socketPath: "/tmp/lkg.sock",
+        startedAt: new Date().toISOString(),
+      });
+    mkdirMock.mockResolvedValue(undefined);
+    rmMock.mockResolvedValue(undefined);
+
+    await expect(
+      startDaemonServer({
+        activeProjectIdentity: "project-a",
+        daemonId: "daemon-a",
+        handler: createHandler(),
+        homeDir: "/tmp/home",
+        logger,
+        socketPath: "/tmp/lkg.sock",
+      }),
+    ).rejects.toThrow("Another LKG daemon owns the socket");
+
+    expect(readSpy).toHaveBeenCalledWith("project-a");
+    expect(rmMock).not.toHaveBeenCalled();
+    expect(createServerMock).not.toHaveBeenCalled();
+  });
+
+  it("removes a socket owned by the current daemon before binding", async () => {
+    const server = createServer();
+    createServerMock.mockImplementation((handler: MockSocketHandler) => {
+      server.socketHandler = handler;
+      return server;
+    });
+    vi.spyOn(FileDaemonRegistry.prototype, "read").mockResolvedValue({
+      configFingerprint: "fingerprint-a",
+      daemonId: "daemon-a",
+      lastHeartbeatAt: "2026-05-05T00:00:00.000Z",
+      leaseExpiresAt: "2026-05-05T00:00:30.000Z",
+      pid: 123,
+      socketPath: "/tmp/lkg.sock",
+      startedAt: "2026-05-05T00:00:00.000Z",
+    });
+    mkdirMock.mockResolvedValue(undefined);
+    rmMock.mockResolvedValue(undefined);
+
+    await startDaemonServer({
+      activeProjectIdentity: "project-a",
+      daemonId: "daemon-a",
+      handler: createHandler(),
+      homeDir: "/tmp/home",
+      logger: createLogger(),
+      socketPath: "/tmp/lkg.sock",
+    });
+
+    expect(rmMock).toHaveBeenCalledWith("/tmp/lkg.sock", { force: true });
+  });
+
+  it("removes a socket owned by an expired daemon before binding", async () => {
+    const server = createServer();
+    createServerMock.mockImplementation((handler: MockSocketHandler) => {
+      server.socketHandler = handler;
+      return server;
+    });
+    vi.spyOn(FileDaemonRegistry.prototype, "read").mockResolvedValue({
+      configFingerprint: "fingerprint-a",
+      daemonId: "daemon-b",
+      lastHeartbeatAt: "2026-05-05T00:00:00.000Z",
+      leaseExpiresAt: "2026-05-05T00:00:00.000Z",
+      pid: 123,
+      socketPath: "/tmp/lkg.sock",
+      startedAt: "2026-05-05T00:00:00.000Z",
+    });
+    mkdirMock.mockResolvedValue(undefined);
+    rmMock.mockResolvedValue(undefined);
+
+    await startDaemonServer({
+      activeProjectIdentity: "project-a",
+      daemonId: "daemon-a",
+      handler: createHandler(),
+      homeDir: "/tmp/home",
+      logger: createLogger(),
+      socketPath: "/tmp/lkg.sock",
+    });
+
+    expect(rmMock).toHaveBeenCalledWith("/tmp/lkg.sock", { force: true });
+  });
+
   it("cleans up registry state on shutdown when registration still matches the socket", async () => {
     const server = createServer();
     const processOnSpy = vi
@@ -266,6 +383,9 @@ describe("start-daemon", () => {
       join(homeDir, "daemon", "project-a.json"),
       `${JSON.stringify({
         configFingerprint: "fingerprint-a",
+        daemonId: "daemon-a",
+        lastHeartbeatAt: "2026-05-05T00:00:00.000Z",
+        leaseExpiresAt: "2026-05-05T00:00:30.000Z",
         pid: 123,
         socketPath: "/tmp/lkg.sock",
         startedAt: "2026-05-05T00:00:00.000Z",
@@ -279,13 +399,16 @@ describe("start-daemon", () => {
       .spyOn(FileDaemonRegistry.prototype, "read")
       .mockResolvedValue({
         configFingerprint: "fingerprint-a",
+        daemonId: "daemon-a",
+        lastHeartbeatAt: "2026-05-05T00:00:00.000Z",
+        leaseExpiresAt: "2026-05-05T00:00:30.000Z",
         pid: 123,
         socketPath: "/tmp/lkg.sock",
         startedAt: "2026-05-05T00:00:00.000Z",
       });
     const deleteSpy = vi
-      .spyOn(FileDaemonRegistry.prototype, "delete")
-      .mockResolvedValue(undefined);
+      .spyOn(FileDaemonRegistry.prototype, "deleteIfOwned")
+      .mockResolvedValue(true);
     const closeMock = vi.fn(
       () =>
         new Promise<void>((resolve) => {
@@ -301,6 +424,7 @@ describe("start-daemon", () => {
 
     await startDaemonServer({
       activeProjectIdentity: "project-a",
+      daemonId: "daemon-a",
       handler,
       homeDir,
       logger,
@@ -324,7 +448,7 @@ describe("start-daemon", () => {
 
     expect(closeMock).toHaveBeenCalledTimes(1);
     expect(readSpy).toHaveBeenCalledWith("project-a");
-    expect(deleteSpy).toHaveBeenCalledWith("project-a");
+    expect(deleteSpy).toHaveBeenCalledWith("project-a", "daemon-a");
     expect(rmMock).toHaveBeenCalledWith("/tmp/lkg.sock", { force: true });
     expect(exitSpy).toHaveBeenCalledWith(0);
   });

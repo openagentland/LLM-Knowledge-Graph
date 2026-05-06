@@ -64,4 +64,38 @@ describe("GlobFileScanner", () => {
       }),
     );
   });
+
+  it("applies .lkgignore patterns in addition to .gitignore", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "glob-file-scanner-"));
+    tempDirs.push(cwd);
+    await writeFile(join(cwd, ".gitignore"), "", "utf8");
+    await writeFile(join(cwd, ".lkgignore"), "package-lock.json\n", "utf8");
+    await writeFile(join(cwd, "package-lock.json"), "{}", "utf8");
+    await writeFile(join(cwd, "main.ts"), "export const ok = true;\n", "utf8");
+
+    const scanner = new GlobFileScanner({
+      cwd,
+      gitignore: "",
+      lkgignore: "package-lock.json\n",
+      maxFileSizeBytes: 1024,
+      skipOversizedFiles: false,
+    });
+
+    const result = await scanner.scan();
+
+    expect(result.candidates).toContainEqual(
+      expect.objectContaining({
+        path: "main.ts",
+      }),
+    );
+    expect(result.candidates).not.toContainEqual(
+      expect.objectContaining({
+        path: "package-lock.json",
+      }),
+    );
+    expect(result.skipped).toContainEqual({
+      path: "package-lock.json",
+      reason: "ignored",
+    });
+  });
 });

@@ -11,7 +11,7 @@
     {
       "name": "llm-knowledge-graph",
       "source": "./",
-      "description": "Codebase intelligence — semantic search workflows, dependency graph analysis, and context artifact exploration",
+      "description": "Codebase intelligence — semantic search, symbol inspection, and bounded repository analysis",
       "category": "development"
     }
   ]

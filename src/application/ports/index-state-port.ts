@@ -33,12 +33,61 @@ export type SaveStatusSnapshotInput = StatusSnapshot & {
   configFingerprint: string;
 };
 
+export type SaveProgressInput = {
+  activeProjectIdentity: string;
+  configFingerprint?: string | null;
+  counters?: StatusSnapshot["counters"];
+  indexRunId: string;
+  indexScope: StatusSnapshot["indexScope"];
+  progress: IndexProgress;
+};
+
 export type RunIndexRecord = {
   configFingerprint: string | null;
   status: StatusSnapshot;
 };
 
+export type IndexRunLock = {
+  acquiredAt: string;
+  indexRunId: string;
+  lastRenewedAt: string;
+  leaseExpiresAt: string;
+  pid: number;
+};
+
+export type AcquireRunLockInput = {
+  activeProjectIdentity: string;
+  indexRunId: string;
+  indexScope: StatusSnapshot["indexScope"];
+  now?: Date;
+};
+
+export type ReleaseRunLockInput = {
+  activeProjectIdentity: string;
+  indexRunId: string;
+  indexScope: StatusSnapshot["indexScope"];
+};
+
+export type RenewRunLockInput = {
+  activeProjectIdentity: string;
+  indexRunId: string;
+  indexScope: StatusSnapshot["indexScope"];
+  now?: Date;
+};
+
+export type RecoverStaleRunStateInput = {
+  activeProjectIdentity: string;
+  indexScope: StatusSnapshot["indexScope"];
+  now?: Date;
+};
+
 export interface IndexStatePort {
+  acquireRunLock?(input: AcquireRunLockInput): Promise<IndexRunLock | null>;
+  releaseRunLock?(input: ReleaseRunLockInput): Promise<void>;
+  renewRunLock?(input: RenewRunLockInput): Promise<IndexRunLock | null>;
+  recoverStaleRunState?(
+    input: RecoverStaleRunStateInput,
+  ): Promise<StatusSnapshot | null>;
   getRecord(
     activeProjectIdentity: string,
     indexScope: StatusSnapshot["indexScope"],
@@ -60,11 +109,5 @@ export interface IndexStatePort {
     indexScope: StatusSnapshot["indexScope"];
   }): Promise<StatusSnapshot>;
   saveStatusSnapshot(input: SaveStatusSnapshotInput): Promise<StatusSnapshot>;
-  saveProgress(input: {
-    activeProjectIdentity: string;
-    configFingerprint?: string | null;
-    indexRunId: string;
-    indexScope: StatusSnapshot["indexScope"];
-    progress: IndexProgress;
-  }): Promise<StatusSnapshot>;
+  saveProgress(input: SaveProgressInput): Promise<StatusSnapshot>;
 }
